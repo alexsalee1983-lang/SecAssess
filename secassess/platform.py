@@ -31,6 +31,7 @@ from .core.audit import AuditLog
 from .core.jobs import JobManager
 from .copilot.harness import CopilotHarness
 from .core.lifecycle import LifecycleManager
+from .core.validator import ExploitabilityValidator
 from .core.risk import RiskScorer
 from .core.orchestrator import Orchestrator
 from .core.rbac import Principal
@@ -59,6 +60,7 @@ class Platform:
     orchestrator: Orchestrator
     copilot: CopilotHarness
     lifecycle: LifecycleManager
+    validator: ExploitabilityValidator
     api_keys: dict[str, Principal]
 
     @classmethod
@@ -100,8 +102,9 @@ class Platform:
         orchestrator = Orchestrator(registry=registry, gate=gate, jobs=jobs, facts=facts, audit=audit, vault=vault)
         copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
         lifecycle = LifecycleManager(evidence)
+        validator = ExploitabilityValidator(evidence)
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   lifecycle, api_keys)
+                   lifecycle, validator, api_keys)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

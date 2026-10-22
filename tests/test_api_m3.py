@@ -77,6 +77,26 @@ class ApiM3Test(unittest.TestCase):
                                           headers=ALICE).status_code, 409)
         self.assertEqual(self.client.get(f"/assessments/{aid}", headers=CLIENT).json()["state"], "active")
 
+    def test_exposure_and_validate_endpoints(self):
+        # 导入资产并建立一条可达边，验证攻击路径端点
+        self.client.post("/projects/p1/imports/cmdb", json={"rows": [{"host": "192.0.2.1"},
+                         {"host": "192.0.2.2"}]}, headers=LEAD)
+        assets = self.client.get("/assets", params={"project_id": "p1", "kind": "asset"}, headers=ALICE).json()
+        ids = {a["key"]: a["id"] for a in assets}
+        body = {"entries": [ids["192.0.2.1"]], "crown_jewels": [ids["192.0.2.2"]]}
+        resp = self.client.post("/exposure/p1", json=body, headers=ALICE)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("paths", resp.json())
+        self.assertIn("choke_points", resp.json())
+
+    def test_validate_version_range(self):
+        self.client.post("/projects/p1/imports/nessus", json={"xml": NESSUS}, headers=LEAD)
+        fid = self.client.get("/findings", params={"project_id": "p1"}, headers=ALICE).json()[0]["finding_id"]
+        r = self.client.post(f"/findings/{fid}/validate",
+                             json={"kind": "version_range", "params": {"fixed_version": "9.9"},
+                                   "intrusive": True}, headers=ALICE).json()
+        self.assertEqual(r["verdict"], "needs_hitl")  # 侵入式需审批
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')

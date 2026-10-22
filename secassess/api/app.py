@@ -15,10 +15,12 @@ from pydantic import BaseModel, Field
 from ..core.hitl import ApprovalError
 from ..core.rbac import Permission, PermissionDenied, Principal
 from ..core.scope_gate import ScopePolicy
+from ..core.validator import Hypothesis
 from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
 from ..platform import Platform
 from ..compliance.mapper import build_matrix
+from ..core.exposure import add_exploit_edges, attack_paths, choke_points
 from ..core.lifecycle import LifecycleError
 from ..inputs.importers import ImportError_, import_cmdb, import_nessus, import_passive
 from ..inputs.scope_loader import readiness
@@ -65,6 +67,17 @@ class TransitionBody(BaseModel):
 
 class RetestBody(BaseModel):
     covered_targets: list[str] = Field(default_factory=list)
+
+
+class ExposureBody(BaseModel):
+    entries: list[str] = Field(default_factory=list)
+    crown_jewels: list[str] = Field(default_factory=list)
+
+
+class ValidateBody(BaseModel):
+    kind: str
+    params: dict = Field(default_factory=dict)
+    intrusive: bool = False
 
 
 class DecisionBody(BaseModel):
@@ -404,6 +417,25 @@ def create_app(platform: Platform) -> FastAPI:
     async def compliance(project_id: str, p: Principal = Depends(principal)) -> dict:
         need(p, Permission.VIEW, project_id)
         return build_matrix(platform.evidence, project_id).to_dict()
+
+    @app.post("/exposure/{project_id}")
+    async def exposure(project_id: str, body: ExposureBody, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, project_id)
+        add_exploit_edges(platform.graph, platform.evidence, project_id)
+        paths = attack_paths(platform.graph, project_id, body.entries, body.crown_jewels)
+        return {"paths": paths, "choke_points": choke_points(paths)}
+
+    @app.post("/findings/{finding_id}/validate")
+    async def validate_finding(finding_id: str, body: ValidateBody, p: Principal = Depends(principal)) -> dict:
+        finding = platform.evidence.get(finding_id)
+        if finding is None:
+            raise HTTPException(404, "发现不存在")
+        need(p, Permission.SCAN, finding.project_id)
+        result = platform.validator.validate(
+            Hypothesis(finding_id, body.kind, body.params, intrusive=body.intrusive))
+        platform.audit.record(actor=p.user, action="finding.validate", project_id=finding.project_id,
+                              target=finding.target, detail=result.to_dict())
+        return result.to_dict()
 
     @app.get("/audit")
     async def audit(project_id: str, limit: int = 200, p: Principal = Depends(principal)) -> dict:
