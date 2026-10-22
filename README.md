@@ -3,7 +3,9 @@
 面向**授权范围内**的防御性安全评估工具箱：资产测绘 → 漏洞扫描 → 配置基线，在同一事实源中贯通并出报告。
 架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，分步计划与完成标准见 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)。
 
-当前进度：**M0（异步内核与契约）+ M1（主干三件套）**。扫描引擎目前是 mock 适配器（合成占位结果，无网络流量）
+当前进度：**M0–M4 已完成**（M0 异步内核与契约、M1 主干三件套、M2 编排与协同、M3 治理与事实源、
+M4 对标顶级升级）。M5 企业化（分布式扫描节点、多租户、SSO/SIEM/ITSM 集成、部署形态）依赖
+ARCHITECTURE.md §15 的待确认事项，尚未开始。扫描引擎目前是 mock 适配器（合成占位结果，无网络流量）
 加一个通用 MCP 适配器，真实引擎通过 MCP server 在运行时接入。
 
 ## 快速上手
@@ -62,7 +64,14 @@ bash scripts/smoke_api.sh            # API 冒烟测试（自动启停服务）
 | GET/POST | `/approvals`、`/{id}/approve`、`/reject`、`/resume` | HITL 审批 | view / approve / scan |
 | POST/GET | `/pipelines`、`/pipelines/{id}?wait=秒` | 主干流水线，支持长轮询 | scan / view |
 | GET/PATCH | `/findings` | 查询 / 人工复核（high 及以上的风险接受需要 approve 权限） | view / scan |
-| GET | `/assets`、`/reports/{pid}?format=md\|html\|docx`、`/audit` | 资产 / 报告 / 审计 | view / report / view |
+| POST/GET | `/copilot/runs`、`/copilot/runs/{id}`、`/continue`、`/copilot/ask` | 自然语言评估回路与结果问答 | scan / view |
+| POST | `/projects/{pid}/imports/{cmdb\|passive\|nessus}` | L0 数据导入（范围外跳过） | integrate |
+| POST/GET | `/assessments`、`/{id}/transition`、`/{id}/retest` | 评估生命周期与复测闭环 | scan / view |
+| GET | `/compliance/{pid}` | 合规覆盖矩阵 | view |
+| POST | `/exposure/{pid}` | 攻击路径 + choke-point | view |
+| POST | `/findings/{id}/validate` | 确定性可利用性验证（侵入式需审批） | scan |
+| GET | `/findings/{id}/evidence` | 证据链 + 原始证据完整性校验 | view |
+| GET | `/assets`、`/reports/{pid}?format=md\|html\|docx`、`/audit` | 资产 / 报告（含合规矩阵）/ 审计 | view / report / view |
 
 ## 使用边界
 
