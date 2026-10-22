@@ -32,6 +32,8 @@ def merge(existing: NormalizedFinding, new: NormalizedFinding) -> NormalizedFind
         if json.dumps(source.to_dict(), sort_keys=True) not in known:
             existing.sources.append(source)
     existing.last_seen = max(existing.last_seen, new.collected_at)
+    if new.risk_score is not None:
+        existing.risk_score = max(existing.risk_score or 0.0, new.risk_score)
     existing.scan_id = new.scan_id
     return existing
 
@@ -112,7 +114,7 @@ class EvidenceStore:
         if min_severity:
             floor = Severity(min_severity).rank
             items = [f for f in items if f.severity.rank >= floor]
-        items.sort(key=lambda f: (-f.severity.rank, f.category.value, f.target, f.title))
+        items.sort(key=lambda f: (-(f.risk_score or 0.0), -f.severity.rank, f.category.value, f.target))
         return items
 
     def _save(self, f: NormalizedFinding) -> None:

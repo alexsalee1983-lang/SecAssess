@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev,api,docx]"
+      - run: pip install -e ".[dev,api,docx,imports]"
       - run: python -m compileall -q secassess
       - run: ruff check secassess tests
       - run: python -m pytest tests -q

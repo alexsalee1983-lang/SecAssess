@@ -7,4 +7,4 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 cd "$CLAUDE_PROJECT_DIR"
-python3 -m pip install --quiet --disable-pip-version-check -e ".[dev,api,docx]"
+python3 -m pip install --quiet --disable-pip-version-check -e ".[dev,api,docx,imports]"

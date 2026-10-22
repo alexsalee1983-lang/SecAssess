@@ -74,6 +74,7 @@ class Channel(str, enum.Enum):
     CLOUD_API = "cloud_api"
     PASSIVE = "passive"
     MANUAL = "manual"
+    IMPORT = "import"  # ⑤ 既有安全数据导入（历史扫描结果、SBOM 等）
 
 
 class IntrusiveLevel(str, enum.Enum):
@@ -93,7 +94,8 @@ class FindingStatus(str, enum.Enum):
     OPEN = "open"
     FALSE_POSITIVE = "false_positive"
     ACCEPTED = "accepted"
-    REMEDIATED = "remediated"
+    REMEDIATED = "remediated"           # 声称已整改，待复测
+    VERIFIED_FIXED = "verified_fixed"   # 复测确认已修复
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,7 @@ class NormalizedFinding:
     project_id: str = "default"
     details: dict = field(default_factory=dict)
     status: FindingStatus = FindingStatus.OPEN
+    risk_score: float | None = None  # 0-100，由风险评分模型计算
     sources: list[FindingSource] = field(default_factory=list)  # 佐证来源（多源合并后累积）
     first_seen: datetime | None = None
     last_seen: datetime | None = None
@@ -222,6 +225,7 @@ class NormalizedFinding:
             "confidence": self.confidence.value, "evidence_ref": self.evidence_ref,
             "collected_at": self.collected_at.isoformat(), "raw_ref": self.raw_ref,
             "remediation": self.remediation, "details": self.details, "status": self.status.value,
+            "risk_score": self.risk_score,
             "sources": [s.to_dict() for s in self.sources], "fingerprint": self.fingerprint,
             "first_seen": self.first_seen.isoformat(), "last_seen": self.last_seen.isoformat(),
         }

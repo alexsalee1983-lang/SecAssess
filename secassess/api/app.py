@@ -19,8 +19,11 @@ from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
 from ..platform import Platform
 from ..compliance.mapper import build_matrix
+from ..core.lifecycle import LifecycleError
+from ..inputs.importers import ImportError_, import_cmdb, import_nessus, import_passive
+from ..inputs.scope_loader import readiness
 from ..copilot.qa import answer as qa_answer
-from ..reports.engine import build_report, render_docx, render_html, render_markdown
+from ..reports.engine import build_report, evidence_chain, render_docx, render_html, render_markdown
 
 
 class ScanBody(BaseModel):
@@ -48,6 +51,20 @@ class CopilotBody(BaseModel):
 class AskBody(BaseModel):
     project_id: str
     question: str
+
+
+class ImportBody(BaseModel):
+    rows: list[dict] = Field(default_factory=list)
+    xml: str | None = None
+
+
+class TransitionBody(BaseModel):
+    target: str
+    credential_ref: str | None = None
+
+
+class RetestBody(BaseModel):
+    covered_targets: list[str] = Field(default_factory=list)
 
 
 class DecisionBody(BaseModel):
@@ -283,6 +300,81 @@ def create_app(platform: Platform) -> FastAPI:
     async def assets(project_id: str, kind: str | None = None, p: Principal = Depends(principal)) -> list[dict]:
         need(p, Permission.VIEW, project_id)
         return platform.graph.nodes(project_id, kind)
+
+    @app.get("/findings/{finding_id}/evidence")
+    async def finding_evidence(finding_id: str, p: Principal = Depends(principal)) -> dict:
+        finding = platform.evidence.get(finding_id)
+        if finding is None:
+            raise HTTPException(404, "发现不存在")
+        need(p, Permission.VIEW, finding.project_id)
+        raw_ok = None
+        if finding.raw_ref:
+            try:
+                raw_ok = platform.evidence.get_raw(finding.raw_ref) is not None
+            except ValueError:
+                raw_ok = False
+        return {"finding_id": finding_id, "chain": evidence_chain(finding, platform.graph),
+                "raw_ref": finding.raw_ref, "raw_integrity_ok": raw_ok}
+
+    # —— L0 数据导入 ——
+    @app.post("/projects/{project_id}/imports/{kind}", status_code=202)
+    async def do_import(project_id: str, kind: str, body: ImportBody, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.INTEGRATE, project_id)
+        policy = platform.gate.policy(project_id)
+        try:
+            if kind == "cmdb":
+                result = import_cmdb(platform.facts, project_id, body.rows, policy=policy)
+            elif kind == "passive":
+                result = import_passive(platform.facts, project_id, body.rows, policy=policy)
+            elif kind == "nessus":
+                if not body.xml:
+                    raise HTTPException(400, "nessus 导入需要 xml 字段")
+                result = import_nessus(platform.facts, project_id, body.xml, policy=policy)
+            else:
+                raise HTTPException(404, f"未知导入类型: {kind}")
+        except ImportError_ as exc:
+            raise HTTPException(400, str(exc)) from None
+        platform.audit.record(actor=p.user, action="data.import", project_id=project_id,
+                              detail={"kind": kind, **result.to_dict()})
+        return result.to_dict()
+
+    # —— 评估生命周期 ——
+    @app.post("/assessments", status_code=201)
+    async def create_assessment(project_id: str, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.SCAN, project_id)
+        return platform.lifecycle.create(project_id).view()
+
+    @app.get("/assessments/{assessment_id}")
+    async def get_assessment(assessment_id: str, p: Principal = Depends(principal)) -> dict:
+        try:
+            a = platform.lifecycle.get(assessment_id)
+        except LifecycleError:
+            raise HTTPException(404, "评估不存在") from None
+        need(p, Permission.VIEW, a.project_id)
+        return a.view()
+
+    @app.post("/assessments/{assessment_id}/transition")
+    async def transition_assessment(assessment_id: str, body: TransitionBody,
+                                    p: Principal = Depends(principal)) -> dict:
+        try:
+            a = platform.lifecycle.get(assessment_id)
+            need(p, Permission.SCAN, a.project_id)
+            ready = readiness(platform.gate, platform.vault, a.project_id, body.credential_ref) \
+                if body.target == "active" else None
+            return platform.lifecycle.transition(assessment_id, body.target, readiness=ready, actor=p.user).view()
+        except LifecycleError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @app.post("/assessments/{assessment_id}/retest")
+    async def retest_assessment(assessment_id: str, body: RetestBody,
+                                p: Principal = Depends(principal)) -> dict:
+        try:
+            a = platform.lifecycle.get(assessment_id)
+            need(p, Permission.SCAN, a.project_id)
+            platform.lifecycle.begin_retest(assessment_id, actor=p.user)
+            return platform.lifecycle.conclude_retest(assessment_id, body.covered_targets)
+        except LifecycleError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     # —— 输出 ——
     @app.get("/reports/{project_id}")

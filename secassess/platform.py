@@ -30,6 +30,8 @@ from .adapters.openapi_review import OpenAPIReviewAdapter
 from .core.audit import AuditLog
 from .core.jobs import JobManager
 from .copilot.harness import CopilotHarness
+from .core.lifecycle import LifecycleManager
+from .core.risk import RiskScorer
 from .core.orchestrator import Orchestrator
 from .core.rbac import Principal
 from .core.scope_gate import ScopeGate
@@ -38,6 +40,7 @@ from .data.evidence import EvidenceStore
 from .data.facts import FactStore
 from .data.vault import Vault
 from .inputs.scope_loader import load_policy
+from .inputs.threat_intel import load_threat_intel
 from .models import ScanType
 
 _MCP_KEYS = {"engine", "engine_version", "intrusive_level", "needs_credential", "default_category"}
@@ -55,6 +58,7 @@ class Platform:
     vault: Vault
     orchestrator: Orchestrator
     copilot: CopilotHarness
+    lifecycle: LifecycleManager
     api_keys: dict[str, Principal]
 
     @classmethod
@@ -72,7 +76,10 @@ class Platform:
         gate = ScopeGate(secret.encode() if secret else None)
         evidence, graph, audit, vault = EvidenceStore(db("evidence.db")), AssetGraph(db("graph.db")), \
             AuditLog(db("audit.db")), Vault()
-        facts = FactStore(evidence, graph)
+        intel_cfg = config.get("threat_intel")
+        scorer = RiskScorer(load_threat_intel(intel_cfg if isinstance(intel_cfg, dict) else Path(base, intel_cfg))
+                            if intel_cfg else None)
+        facts = FactStore(evidence, graph, scorer)
         jobs = JobManager(sink=facts, verifier=gate, max_concurrent=int(config.get("max_concurrent", 4)),
                           default_timeout=float(config.get("job_timeout", 3600)))
         registry = AdapterRegistry()
@@ -92,7 +99,9 @@ class Platform:
                     for key, v in config.get("api_keys", {}).items()}
         orchestrator = Orchestrator(registry=registry, gate=gate, jobs=jobs, facts=facts, audit=audit, vault=vault)
         copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
-        return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot, api_keys)
+        lifecycle = LifecycleManager(evidence)
+        return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
+                   lifecycle, api_keys)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":
