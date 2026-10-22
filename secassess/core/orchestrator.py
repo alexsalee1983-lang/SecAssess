@@ -168,8 +168,8 @@ class Orchestrator:
                 run.state = "stopped"
                 return
             # observe：后续步骤只针对本次种子范围内发现的资产（而非项目图谱中的全部节点）
-            services = self._discovered(run, "service")
-            hosts = self._discovered(run, "asset")
+            services = self.discovered(run.project_id, "service", run.seeds)
+            hosts = self.discovered(run.project_id, "asset", run.seeds)
             followups, skipped = [], []
             if services:
                 followups.append(self._step(run, "vuln", principal, targets=services))
@@ -203,8 +203,9 @@ class Orchestrator:
         return step
 
     # —— 内部 ——
-    def _discovered(self, run: PipelineRun, kind: str) -> list[str]:
-        return [n["key"] for n in self.facts.graph.nodes(run.project_id, kind) if within_targets(n["key"], run.seeds)]
+    def discovered(self, project_id: str, kind: str, seeds: list[str]) -> list[str]:
+        """Asset Graph 中落在 seeds 范围内的节点（observe 阶段的外部记忆检索）。"""
+        return [n["key"] for n in self.facts.graph.nodes(project_id, kind) if within_targets(n["key"], seeds)]
 
     def _submit(self, plan: AgentPlan, token: str, principal: Principal, project_id: str,
                 approval_id: str | None = None) -> dict:
