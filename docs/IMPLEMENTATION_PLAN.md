@@ -205,3 +205,129 @@ pip install -e ".[dev,api]"      # dev = pytest；api = fastapi + uvicorn + http
 | 5 | `bash scripts/smoke_api.sh` | 返回 0 |
 | 6 | 远端分支 CI | 最新提交为绿色 |
 | 7 | 对照 ARCHITECTURE.md | §13 中 M0 的出口标准（submit 瞬间返回、后台并发、轮询/SSE、测试全绿）与 M1 的出口标准（资产→漏洞→基线在同一事实源贯通并出报告）都有对应的测试用例 |
+
+---
+
+# 第二阶段：M2 – M4 实施计划与完成标准
+
+沿用第 0 节的总规则：每一步列出的命令都返回 0；全量测试仍然通过；compileall 和 ruff 通过；代码已提交推送，CI 为绿色。
+M5（企业化：分布式扫描节点、SSO/SIEM/ITSM 集成、部署形态）依赖架构文档 §15 的待确认事项和基础设施选型，**做到 M5 前先停下来请用户确认**。
+
+## M2 · 编排与协同（自然语言驱动完整评估，高敏动作卡审批）
+
+### 第 13 步：规划器接口 + 规则规划器
+**文件**：`secassess/copilot/planner.py`（`PlannedStep`、`Planner` 协议、`RuleBasedPlanner`）、`tests/test_planner.py`
+
+**完成标准**：`python -m pytest tests/test_planner.py -q` 返回 0，至少覆盖：
+- 从中文或英文指令中提取 IP、CIDR、域名、URL 目标。
+- 关键词映射到 agent：资产/端口 → asset，漏洞 → vuln，基线 → baseline；"全面评估"展开为 asset → vuln → baseline。
+- "深度"一词映射为 `profile=deep`。
+- 指令中没有目标时返回空计划并给出原因。
+- 输出的 agent 名不在白名单内时被丢弃。
+
+### 第 14 步：LLM 规划器（Claude）+ 大模型安全
+**文件**：`secassess/copilot/llm.py`（`ClaudePlanner`，可选依赖 `anthropic`）、`tests/test_llm_planner.py`
+
+**完成标准**：`python -m pytest tests/test_llm_planner.py -q` 返回 0，用假客户端，不调用真实 API，至少覆盖：
+- 模型的工具调用结果按严格 schema 校验，非法 agent、非法 option、超长目标列表都被拒绝。
+- 模型拿不到也无法生成 scope_token 或 approval_id；它的输出只是"提议"，必须经过 Scope Gate。
+- 事实源内容作为不可信数据放入 `<untrusted_data>` 区块，注入文本不会改变计划。
+- 遇到 API 错误、`refusal` 或没有工具调用时，回退到规则规划器。
+- 未安装 `anthropic` 或没有凭证时，自动使用规则规划器。
+
+### 第 15 步：Copilot Harness 回路 + 结果问答 + API
+**文件**：`secassess/copilot/harness.py`、`secassess/copilot/qa.py`、`secassess/api/app.py`（`/copilot`）、`tests/test_copilot.py`
+
+**完成标准**：`python -m pytest tests/test_copilot.py -q` 返回 0，至少覆盖：
+- 一句"对 192.0.2.0/28 做全面评估"能自动走完 plan → gate → act → observe，事实源中出现三类发现。
+- 深度扫描在 HITL 处暂停（状态 `waiting_approval`），审批后 `continue` 能继续。
+- 越界目标被 Gate 拒绝，回路如实报告且不会重试绕过。
+- 循环次数有上限（max_iterations）。
+- 问答只从事实源检索并返回带 finding_id 的引用。
+- API：`POST /copilot/runs` 返回 202；`GET /copilot/runs/{id}?wait=` 可查询；`POST /copilot/ask` 返回结果。
+
+### 第 16 步：其余业务 Agent（④ EASM、⑤ 钓鱼演练、⑦ Web/API）
+**文件**：`secassess/agents/easm.py`、`phishing.py`、`webapi.py`；`secassess/adapters/mock_placeholder.py` 扩展；`secassess/adapters/openapi_review.py`（OpenAPI 静态审查，不发请求）；`tests/test_agents_ext.py`
+
+**完成标准**：`python -m pytest tests/test_agents_ext.py -q` 返回 0，至少覆盖：
+- EASM 的侵入等级为 readonly，免扫清单仍然生效。
+- 钓鱼演练的侵入等级为 external，**任何情况下都必须先审批**；适配器在没有审批标记时自身也拒绝执行（纵深防御）。
+- OpenAPI 静态审查能识别以下问题：缺少安全要求的接口、`http://` 服务器地址、未声明认证方案；整个过程不发出任何网络请求。
+
+### 第 17 步：⑥ 合规映射
+**文件**：`secassess/compliance/frameworks.py`（CIS Controls v8、ISO/IEC 27001:2022 附录 A 的控制项编号；等保 2.0 待 §15 确认后补充）、`secassess/compliance/mapper.py`、`secassess/agents/compliance.py`；报告增加合规矩阵；`tests/test_compliance.py`
+
+**完成标准**：`python -m pytest tests/test_compliance.py -q` 返回 0，至少覆盖：
+- 各类发现能映射到控制项。
+- 矩阵中每个控制项的状态为"有未关闭问题 / 已覆盖无问题 / 无证据"。
+- 误报和已接受风险不计为未关闭问题。
+- 人工证据可以把控制项标为已覆盖。
+- 报告输出合规矩阵。
+
+## M3 · 治理与事实源（多源去重合并、证据链可追溯、权限门控）
+
+### 第 18 步：L0 数据导入（② CMDB、④ 被动采集、⑤ 既有扫描结果）
+**文件**：`secassess/inputs/cmdb.py`（CSV）、`secassess/inputs/passive.py`（DNS/流量记录 CSV）、`secassess/inputs/nessus.py`（.nessus XML，使用 defusedxml 或安全的标准库解析）、`tests/test_imports.py`
+
+**完成标准**：`python -m pytest tests/test_imports.py -q` 返回 0，至少覆盖：
+- CMDB 导入后，资产节点带上重要性分级和负责人。
+- Nessus 导入的发现 channel 为 `import`，并与主动扫描的同一问题合并。
+- 被动采集发现的新资产 channel 为 `passive`。
+- 导入的 XML 中含 DOCTYPE/实体定义时被拒绝（防 XXE / 实体膨胀）。
+- 授权范围外的导入记录被标记为 `out_of_scope`，不进入扫描目标。
+
+### 第 19 步：风险评分模型
+**文件**：`secassess/core/risk.py`、`secassess/inputs/threat_intel.py`（离线 KEV/EPSS JSON）、`tests/test_risk.py`
+
+**完成标准**：`python -m pytest tests/test_risk.py -q` 返回 0，至少覆盖：
+- 分数单调性：严重性越高、资产越重要、暴露在互联网、命中 KEV、EPSS 越高，分数都越高。
+- 分数在 0–100 之间，并给出 P1–P4 优先级。
+- 事实源写入发现时自动计算评分；报告按风险排序。
+
+### 第 20 步：评估生命周期 + 复测闭环
+**文件**：`secassess/core/lifecycle.py`、`tests/test_lifecycle.py`
+
+**完成标准**：`python -m pytest tests/test_lifecycle.py -q` 返回 0，至少覆盖：
+- 状态流转为 draft → scoped → active → review → reported → retest → closed，非法跳转被拒绝。
+- 进入 active 前必须授权与凭证就绪。
+- 复测时：覆盖了的目标上未再出现的发现标为已验证修复；再次出现的标为回归；未覆盖的目标保持原状态。
+
+### 第 21 步：M3 的 API 与证据链查询
+**文件**：`secassess/api/app.py`（imports、risk、lifecycle、compliance、`/findings/{id}/evidence`）、`tests/test_api_m3.py`
+
+**完成标准**：`python -m pytest tests/test_api_m3.py -q` 返回 0，至少覆盖：
+- 各端点的权限门控（导入需要 integrate 权限）。
+- 证据链端点返回 通道 → 引擎 → 时间 → 原始证据（含 sha256 校验结果）→ 资产节点。
+
+## M4 · 对标顶级升级（攻击路径 + choke-point、验证降误报、持续触发）
+
+### 第 22 步：Exposure Graph 攻击路径与 choke point
+**文件**：`secassess/core/exposure.py`、`tests/test_exposure.py`
+
+**完成标准**：`python -m pytest tests/test_exposure.py -q` 返回 0，至少覆盖：
+- 从入口到核心资产（crown jewel）的最短路径按边权重计算。
+- choke point 排名正确（被最多路径经过的节点排在最前）。
+- 没有路径时返回空结果；不存在的节点报错。
+- 发现能自动生成 `exploitable_via` 边。
+
+### 第 23 步：确定性可利用性验证器（§10.2）
+**文件**：`secassess/core/validator.py`、`tests/test_validator.py`
+
+**完成标准**：`python -m pytest tests/test_validator.py -q` 返回 0，至少覆盖：
+- 验证器独立于 LLM；LLM 只能提交"假设"。
+- 非侵入式检查（版本区间比对、服务可达性）基于事实源数据完成，不发网络请求。
+- 侵入式验证必须先走 HITL。
+- 验证成功时写回 `confidence=confirmed` 和 evidence_ref；验证不成立时不提升置信度。
+
+### 第 24 步：CTEM 持续触发
+**文件**：`secassess/core/ctem.py`、`tests/test_ctem.py`
+
+**完成标准**：`python -m pytest tests/test_ctem.py -q` 返回 0，至少覆盖：
+- 新资产、配置漂移、新情报命中、周期到期这四种触发条件都能产生重评估任务。
+- 重评估同样经过 Scope Gate；同一资产在冷却期内不会重复触发。
+- 调度器可以启动、停止，测试中时钟可注入。
+
+## 阶段验收
+- 第 3 节整体验收表中的所有命令仍然返回 0。
+- `python demo.py` 增加演示 Copilot 自然语言评估和合规矩阵两段内容。
+- 远端 CI 为绿色。
