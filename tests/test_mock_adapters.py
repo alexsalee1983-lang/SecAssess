@@ -53,7 +53,7 @@ class MockAdaptersTest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(f.category, Category.VULNERABILITY)
         self.assertTrue(PlaceholderAdapter(ScanType.CONFIG_BASELINE).capability().needs_credential)
         with self.assertRaises(ValueError):
-            PlaceholderAdapter(ScanType.PHISHING)
+            PlaceholderAdapter(ScanType.PORT_DISCOVERY)
 
     def test_registry(self):
         reg = AdapterRegistry()

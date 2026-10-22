@@ -26,6 +26,7 @@ from .adapters.base import AdapterRegistry
 from .adapters.mcp import MCPToolAdapter
 from .adapters.mock_nmap import MockNmapAdapter
 from .adapters.mock_placeholder import PlaceholderAdapter
+from .adapters.openapi_review import OpenAPIReviewAdapter
 from .core.audit import AuditLog
 from .core.jobs import JobManager
 from .copilot.harness import CopilotHarness
@@ -78,8 +79,9 @@ class Platform:
         if config.get("mock_adapters", True):
             delay = float(config.get("mock_delay", 0.01))
             registry.register(MockNmapAdapter(delay))
-            registry.register(PlaceholderAdapter(ScanType.VULN, delay))
-            registry.register(PlaceholderAdapter(ScanType.CONFIG_BASELINE, delay))
+            for st in (ScanType.VULN, ScanType.CONFIG_BASELINE, ScanType.EXPOSURE, ScanType.WEB, ScanType.PHISHING):
+                registry.register(PlaceholderAdapter(st, delay))
+            registry.register(OpenAPIReviewAdapter(evidence=evidence))
         for spec in config.get("mcp_adapters", []):
             registry.register(MCPToolAdapter(
                 spec["name"], list(spec["command"]), spec["tool_name"], scan_types=set(spec["scan_types"]),

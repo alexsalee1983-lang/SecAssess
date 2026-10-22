@@ -25,6 +25,9 @@ class OrchestratorTest(unittest.IsolatedAsyncioTestCase):
         registry.register(MockNmapAdapter(delay=0))
         registry.register(PlaceholderAdapter(ScanType.VULN, delay=0))
         registry.register(PlaceholderAdapter(ScanType.CONFIG_BASELINE, delay=0))
+        registry.register(PlaceholderAdapter(ScanType.EXPOSURE, delay=0))
+        registry.register(PlaceholderAdapter(ScanType.WEB, delay=0))
+        registry.register(PlaceholderAdapter(ScanType.PHISHING, delay=0))
         self.gate = ScopeGate(b"k" * 32)
         self.gate.set_policy(ScopePolicy(project_id="p1", authorization_ref="AUTH-1",
                                          allowed_cidrs=["192.0.2.0/24"], excluded=["192.0.2.254"]))
@@ -92,6 +95,17 @@ class OrchestratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actions, ["scan.pending_approval", "scan.denied", "approval.approve", "scan.submitted"])
         self.assertTrue(self.audit.verify_chain())
 
+    async def test_phishing_requires_approval_and_runs_after(self):
+        self.gate.set_policy(ScopePolicy(project_id="p1", authorization_ref="AUTH-1",
+                                         allowed_domains=["example.com"], allowed_scan_types=["phishing"]))
+        out = self.orch.execute("phishing", "p1", ALICE, targets=["user@example.com"], adapter="mock-phishing")
+        self.assertEqual(out["state"], "pending_approval")
+        self.assertIn("对外动作", out["reasons"])
+        self.orch.approve(out["approval_id"], BOB, "ok")
+        res = self.orch.resume(out["approval_id"], ALICE)
+        self.assertEqual(res["state"], "submitted")
+        self.assertEqual((await self.jobs.wait(res["job_id"], timeout=5))["state"], "done")
+
     async def test_rejected_approval_cannot_resume(self):
         outcome = self.orch.execute("asset", "p1", ALICE, targets=["192.0.2.1"], options={"profile": "deep"})
         self.orch.reject(outcome["approval_id"], BOB, "not now")
@@ -122,7 +136,7 @@ class OrchestratorTest(unittest.IsolatedAsyncioTestCase):
         bad_cred = self.orch.execute("baseline", "p1", ALICE, credential_ref="vault://mem/nope")
         self.assertEqual(bad_cred["state"], "denied")
         with self.assertRaises(KeyError):
-            self.orch.execute("phishing", "p1", ALICE, targets=["192.0.2.1"])
+            self.orch.execute("nosuchagent", "p1", ALICE, targets=["192.0.2.1"])
 
 
 if __name__ == "__main__":

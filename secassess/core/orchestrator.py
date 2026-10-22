@@ -11,14 +11,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..adapters.base import AdapterRegistry
+from ..adapters.mock_placeholder import APPROVAL_OPTION
 from ..agents.asset import AssetDiscoveryAgent
 from ..agents.base import AgentPlan, BusinessAgent
 from ..agents.baseline import BaselineAgent
+from ..agents.easm import EasmAgent
+from ..agents.phishing import PhishingAgent
 from ..agents.vuln import VulnScanAgent
+from ..agents.webapi import WebApiAgent
 from ..data.facts import FactStore
 from ..data.vault import Vault
 from ..inputs.scope_loader import readiness
-from ..models import ScanRequest, new_id, utcnow
+from ..models import IntrusiveLevel, ScanRequest, new_id, utcnow
 from .audit import AuditLog
 from .hitl import ApprovalError
 from .jobs import JobManager, JobState
@@ -59,7 +63,8 @@ class Orchestrator:
         self.registry, self.gate, self.jobs = registry, gate, jobs
         self.facts, self.audit, self.vault = facts, audit, vault
         self.agents: dict[str, BusinessAgent] = {
-            cls.name: cls(registry, facts.graph) for cls in (AssetDiscoveryAgent, VulnScanAgent, BaselineAgent)}
+            cls.name: cls(registry, facts.graph)
+            for cls in (AssetDiscoveryAgent, VulnScanAgent, BaselineAgent, EasmAgent, PhishingAgent, WebApiAgent)}
         self._pending: dict[str, PendingAction] = {}
         self._pipelines: dict[str, PipelineRun] = {}
         self._pipeline_tasks: dict[str, asyncio.Task] = {}
@@ -209,8 +214,12 @@ class Orchestrator:
 
     def _submit(self, plan: AgentPlan, token: str, principal: Principal, project_id: str,
                 approval_id: str | None = None) -> dict:
+        options = dict(plan.options)
+        if approval_id is not None and plan.intrusive_level == IntrusiveLevel.EXTERNAL:
+            # 对外动作已过 HITL：向适配器注入审批标记（不影响已审批动作的指纹，令牌只绑定目标/类型）
+            options[APPROVAL_OPTION] = True
         request = ScanRequest(targets=plan.targets, scan_type=plan.scan_type, scope_token=token,
-                              credential_ref=plan.credential_ref, options=plan.options, rate_limit=plan.rate_limit,
+                              credential_ref=plan.credential_ref, options=options, rate_limit=plan.rate_limit,
                               project_id=project_id)
         job_id = self.jobs.submit(plan.adapter, request)
         policy = self.gate.policy(project_id)
