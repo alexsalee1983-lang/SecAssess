@@ -54,6 +54,21 @@ def target_host(target: str) -> str:
     return t.lower().rstrip(".")
 
 
+def within_targets(target: str, allowed: list[str]) -> bool:
+    """target 是否落在 allowed 之内：同一主机、属于请求的网段，或是请求域名的子域。"""
+    host = target_host(target)
+    host_net = as_network(host)
+    for item in allowed:
+        allowed_host = target_host(item)
+        if host == allowed_host or host.endswith("." + allowed_host):
+            return True
+        allowed_net = as_network(allowed_host)
+        if (host_net is not None and allowed_net is not None and host_net.version == allowed_net.version
+                and host_net.subnet_of(allowed_net)):
+            return True
+    return False
+
+
 def _domain_match(host: str, pattern: str) -> bool:
     pattern = pattern.lower().rstrip(".")
     if pattern.startswith("*."):

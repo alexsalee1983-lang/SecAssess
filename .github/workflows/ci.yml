@@ -19,3 +19,6 @@ jobs:
       - run: python -m compileall -q secassess
       - run: ruff check secassess tests
       - run: python -m pytest tests -q
+      - run: python -m unittest discover -s tests
+      - run: python demo.py
+      - run: bash scripts/smoke_api.sh

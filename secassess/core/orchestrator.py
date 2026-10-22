@@ -23,7 +23,7 @@ from .audit import AuditLog
 from .hitl import ApprovalError
 from .jobs import JobManager, JobState
 from .rbac import Permission, Principal
-from .scope_gate import ScopeGate, build_action
+from .scope_gate import ScopeGate, build_action, within_targets
 
 
 @dataclass
@@ -167,12 +167,22 @@ class Orchestrator:
             if asset["state"] != JobState.DONE:
                 run.state = "stopped"
                 return
-            followups = [self._step(run, "vuln", principal)]
-            if credential_ref:
-                followups.append(self._step(run, "baseline", principal, credential_ref=credential_ref))
-            results = await asyncio.gather(*followups)
+            # observe：后续步骤只针对本次种子范围内发现的资产（而非项目图谱中的全部节点）
+            services = self._discovered(run, "service")
+            hosts = self._discovered(run, "asset")
+            followups, skipped = [], []
+            if services:
+                followups.append(self._step(run, "vuln", principal, targets=services))
+            else:
+                skipped.append({"agent": "vuln", "state": "skipped", "reason": "种子范围内未发现服务"})
             if not credential_ref:
-                run.steps.append({"agent": "baseline", "state": "skipped", "reason": "未提供凭证引用"})
+                skipped.append({"agent": "baseline", "state": "skipped", "reason": "未提供凭证引用"})
+            elif hosts:
+                followups.append(self._step(run, "baseline", principal, targets=hosts, credential_ref=credential_ref))
+            else:
+                skipped.append({"agent": "baseline", "state": "skipped", "reason": "种子范围内未发现主机"})
+            results = await asyncio.gather(*followups)
+            run.steps.extend(skipped)
             run.state = "done" if all(r["state"] == JobState.DONE for r in results) else "stopped"
         except Exception as exc:  # 流水线失败只影响本次运行
             run.state, run.error = "failed", f"{type(exc).__name__}: {exc}"
@@ -193,6 +203,9 @@ class Orchestrator:
         return step
 
     # —— 内部 ——
+    def _discovered(self, run: PipelineRun, kind: str) -> list[str]:
+        return [n["key"] for n in self.facts.graph.nodes(run.project_id, kind) if within_targets(n["key"], run.seeds)]
+
     def _submit(self, plan: AgentPlan, token: str, principal: Principal, project_id: str,
                 approval_id: str | None = None) -> dict:
         request = ScanRequest(targets=plan.targets, scan_type=plan.scan_type, scope_token=token,

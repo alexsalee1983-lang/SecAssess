@@ -16,7 +16,7 @@ import json
 import shutil
 from typing import Callable
 
-from ..core.scope_gate import as_network, target_host
+from ..core.scope_gate import within_targets
 from ..models import (Capability, Category, Confidence, IntrusiveLevel, NormalizedFinding, ScanRequest,
                       ScanType, Severity)
 from .base import AdapterError, ProgressCallback, ScannerAdapter
@@ -27,21 +27,6 @@ EvidenceSink = Callable[[str, bytes], str]  # (project_id, raw) -> evidence_ref
 
 class MCPError(AdapterError):
     pass
-
-
-def within_targets(target: str, allowed: list[str]) -> bool:
-    """结果目标必须落在请求目标之内：同一主机、属于请求的网段，或是请求域名的子域。"""
-    host = target_host(target)
-    host_net = as_network(host)
-    for item in allowed:
-        allowed_host = target_host(item)
-        if host == allowed_host or host.endswith("." + allowed_host):
-            return True
-        allowed_net = as_network(allowed_host)
-        if (host_net is not None and allowed_net is not None and host_net.version == allowed_net.version
-                and host_net.subnet_of(allowed_net)):
-            return True
-    return False
 
 
 def default_normalizer(adapter: "MCPToolAdapter", request: ScanRequest, result: dict) -> list[NormalizedFinding]:

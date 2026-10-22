@@ -50,6 +50,15 @@ class OrchestratorTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("summary" in s for s in run["steps"]))
         self.assertTrue(self.audit.verify_chain())
 
+    async def test_pipeline_followups_limited_to_seed_range(self):
+        other = self.orch.execute("asset", "p1", ALICE, targets=["192.0.2.64/28"])
+        await self.jobs.wait(other["job_id"], timeout=5)
+        run = await self.orch.run_pipeline("p1", ["192.0.2.0/28"], ALICE)
+        vuln_job = next(s for s in run["steps"] if s["agent"] == "vuln")["job_id"]
+        targets = self.jobs.get(vuln_job).request.targets
+        self.assertTrue(targets)
+        self.assertTrue(all(int(t.split(":")[0].rsplit(".", 1)[1]) < 16 for t in targets), targets)
+
     async def test_pipeline_without_credential_skips_baseline(self):
         run = await self.orch.run_pipeline("p1", ["192.0.2.0/29"], ALICE)
         self.assertEqual(run["state"], "done")
