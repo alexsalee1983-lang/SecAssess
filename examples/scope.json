@@ -1,0 +1,17 @@
+{
+  "project_id": "demo",
+  "authorization_ref": "AUTH-DEMO-2026-001",
+  "allowed_cidrs": ["192.0.2.0/24", "198.51.100.0/24"],
+  "allowed_domains": ["*.example.com"],
+  "excluded": ["192.0.2.254", "198.51.100.128/25"],
+  "valid_from": "2026-01-01T00:00:00Z",
+  "valid_until": "2030-12-31T23:59:59Z",
+  "windows": [],
+  "max_rate": {"pps": 1000, "concurrency": 50},
+  "allowed_scan_types": ["port_discovery", "vuln", "config_baseline"],
+  "fragile_assets": ["192.0.2.200"],
+  "elevated_credentials": [],
+  "out_of_scope_action": "deny",
+  "emergency_contacts": ["soc@example.com"],
+  "roe_notes": "示例授权：仅限 RFC 5737 文档网段与 example.com，演示用途。"
+}
