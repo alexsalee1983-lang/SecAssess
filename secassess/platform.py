@@ -28,6 +28,7 @@ from .adapters.mock_nmap import MockNmapAdapter
 from .adapters.mock_placeholder import PlaceholderAdapter
 from .core.audit import AuditLog
 from .core.jobs import JobManager
+from .copilot.harness import CopilotHarness
 from .core.orchestrator import Orchestrator
 from .core.rbac import Principal
 from .core.scope_gate import ScopeGate
@@ -52,6 +53,7 @@ class Platform:
     audit: AuditLog
     vault: Vault
     orchestrator: Orchestrator
+    copilot: CopilotHarness
     api_keys: dict[str, Principal]
 
     @classmethod
@@ -87,7 +89,8 @@ class Platform:
         api_keys = {key: Principal(v["user"], v["role"], frozenset(v.get("projects", ["*"])))
                     for key, v in config.get("api_keys", {}).items()}
         orchestrator = Orchestrator(registry=registry, gate=gate, jobs=jobs, facts=facts, audit=audit, vault=vault)
-        return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, api_keys)
+        copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
+        return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot, api_keys)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

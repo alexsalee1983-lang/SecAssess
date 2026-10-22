@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .core.rbac import Principal, Role
 from .platform import Platform
+from .copilot.harness import run_to_completion
+from .copilot.qa import answer as qa_answer
 from .reports.engine import build_report, render_html, render_markdown
 
 SCOPE = {
@@ -77,7 +79,19 @@ async def _demo(out_dir: Path) -> None:
     categories = {f.category.value for f in platform.evidence.query("demo")}
     check(categories == {"asset", "vulnerability", "misconfig"}, f"事实源类别不完整: {categories}")
 
-    print("== 5. 报告 ==")
+    print("== 5. 自然语言 Copilot（plan → gate → act → observe）==")
+    run = platform.copilot.start("demo", "对 198.51.100.32/28 做全面评估", ALICE, credential_ref=credential)
+    run = await run_to_completion(platform.copilot, run, ALICE, auto_approver=BOB)
+    check(run.state == "done", f"Copilot 回路未完成: {run.view()}")
+    print(f"  指令: {run.instruction}")
+    for step in run.steps:
+        if step.get("state") == "done":
+            print(f"  [{step['iteration']}] {step['agent']:<9} findings={step['finding_count']}  {step['rationale']}")
+    ask = qa_answer(platform.evidence, "demo", "有哪些高危漏洞？")
+    print(f"  问答: {ask['answer']}")
+    check(ask["filters"]["min_severity"] == "high", "问答未按高危过滤")
+
+    print("== 6. 报告 ==")
     out_dir.mkdir(parents=True, exist_ok=True)
     model = build_report("demo", platform.evidence, platform.graph, platform.gate.policy("demo"))
     md_path, html_path = out_dir / "demo-report.md", out_dir / "demo-report.html"

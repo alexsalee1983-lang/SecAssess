@@ -125,6 +125,29 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(audit["chain_valid"])
         self.assertIn("finding.review", {e["action"] for e in audit["entries"]})
 
+    def test_copilot_run_and_ask(self):
+        resp = self.client.post("/copilot/runs", json={"project_id": "p1",
+                                "instruction": "对 192.0.2.0/28 做资产测绘和漏洞扫描"}, headers=ALICE)
+        self.assertEqual(resp.status_code, 202)
+        run = resp.json()
+        self.assertEqual(run["state"], "done", run)
+        self.assertEqual(self.client.get(f"/copilot/runs/{run['run_id']}", headers=CLIENT).json()["state"], "done")
+        self.assertEqual(self.client.get("/copilot/runs/cop_missing", headers=ALICE).status_code, 404)
+        ask = self.client.post("/copilot/ask", json={"project_id": "p1", "question": "有哪些漏洞？"},
+                               headers=CLIENT).json()
+        self.assertGreater(ask["count"], 0)
+        self.assertEqual(ask["filters"]["category"], "vulnerability")
+
+    def test_copilot_deep_scan_waits_for_approval(self):
+        resp = self.client.post("/copilot/runs", json={"project_id": "p1",
+                                "instruction": "对 192.0.2.3 做深度扫描"}, headers=ALICE)
+        run = resp.json()
+        self.assertEqual(run["state"], "waiting_approval", run)
+        approval_id = run["pending_approvals"][0]["approval_id"]
+        self.assertEqual(self.client.post(f"/approvals/{approval_id}/approve", json={}, headers=BOB).status_code, 200)
+        cont = self.client.post(f"/copilot/runs/{run['run_id']}/continue", headers=ALICE).json()
+        self.assertEqual(cont["state"], "done", cont)
+
 
 class CliTest(unittest.TestCase):
     def test_help(self):

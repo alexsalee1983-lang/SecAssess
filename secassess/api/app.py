@@ -18,6 +18,7 @@ from ..core.scope_gate import ScopePolicy
 from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
 from ..platform import Platform
+from ..copilot.qa import answer as qa_answer
 from ..reports.engine import build_report, render_docx, render_html, render_markdown
 
 
@@ -35,6 +36,17 @@ class PipelineBody(BaseModel):
     seeds: list[str]
     credential_ref: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class CopilotBody(BaseModel):
+    project_id: str
+    instruction: str
+    credential_ref: str | None = None
+
+
+class AskBody(BaseModel):
+    project_id: str
+    question: str
 
 
 class DecisionBody(BaseModel):
@@ -211,6 +223,35 @@ def create_app(platform: Platform) -> FastAPI:
         if wait > 0 and view["state"] == "running":
             view = await orch.wait_pipeline(pipeline_id, timeout=min(wait, 60.0))
         return view
+
+    # —— Copilot（自然语言驱动）——
+    @app.post("/copilot/runs", status_code=202)
+    async def copilot_start(body: CopilotBody, p: Principal = Depends(principal)) -> dict:
+        run = platform.copilot.start(body.project_id, body.instruction, p, credential_ref=body.credential_ref)
+        await platform.copilot.drive(run, p)
+        return run.view()
+
+    @app.get("/copilot/runs/{run_id}")
+    async def copilot_get(run_id: str, p: Principal = Depends(principal)) -> dict:
+        try:
+            run = platform.copilot.get(run_id)
+        except KeyError:
+            raise HTTPException(404, "copilot run 不存在") from None
+        need(p, Permission.VIEW, run.project_id)
+        return run.view()
+
+    @app.post("/copilot/runs/{run_id}/continue", status_code=202)
+    async def copilot_continue(run_id: str, p: Principal = Depends(principal)) -> dict:
+        try:
+            platform.copilot.get(run_id)
+        except KeyError:
+            raise HTTPException(404, "copilot run 不存在") from None
+        return (await platform.copilot.continue_run(run_id, p)).view()
+
+    @app.post("/copilot/ask")
+    async def copilot_ask(body: AskBody, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, body.project_id)
+        return qa_answer(platform.evidence, body.project_id, body.question)
 
     # —— 事实源 ——
     @app.get("/findings")
