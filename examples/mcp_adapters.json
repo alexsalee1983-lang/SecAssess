@@ -1,0 +1,25 @@
+{
+  "_comment": "把下面的条目合并进平台配置的 mcp_adapters 字段即可在运行时接入外部 MCP server。command 不经 shell 执行。",
+  "mcp_adapters": [
+    {
+      "name": "vuln-mcp",
+      "command": ["python3", "-m", "your_vuln_mcp_server"],
+      "tool_name": "scan",
+      "scan_types": ["vuln"],
+      "engine": "your-engine",
+      "engine_version": "1.0.0",
+      "intrusive_level": "safe",
+      "needs_credential": false,
+      "default_category": "vulnerability"
+    },
+    {
+      "name": "baseline-mcp",
+      "command": ["python3", "-m", "your_baseline_mcp_server"],
+      "tool_name": "check",
+      "scan_types": ["config_baseline"],
+      "intrusive_level": "safe",
+      "needs_credential": true,
+      "default_category": "misconfig"
+    }
+  ]
+}

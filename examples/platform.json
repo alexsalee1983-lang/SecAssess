@@ -1,0 +1,15 @@
+{
+  "data_dir": null,
+  "max_concurrent": 4,
+  "job_timeout": 3600,
+  "mock_adapters": true,
+  "mock_delay": 0.01,
+  "scopes": ["examples/scope.json"],
+  "api_keys": {
+    "demo-lead-key": {"user": "lead", "role": "lead", "projects": ["demo"]},
+    "demo-assessor-key": {"user": "alice", "role": "assessor", "projects": ["demo"]},
+    "demo-approver-key": {"user": "bob", "role": "approver", "projects": ["demo"]},
+    "demo-client-key": {"user": "client", "role": "client", "projects": ["demo"]}
+  },
+  "mcp_adapters": []
+}

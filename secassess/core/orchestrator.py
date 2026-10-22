@@ -145,6 +145,14 @@ class Orchestrator:
         await self._pipeline_tasks[pipeline_id]
         return self.pipeline(pipeline_id)
 
+    async def wait_pipeline(self, pipeline_id: str, timeout: float | None = None) -> dict:
+        """等待流水线结束（或超时），返回当前状态；不会取消流水线。"""
+        task = self._pipeline_tasks.get(pipeline_id)
+        if task is None:
+            raise KeyError(f"未知 pipeline: {pipeline_id}")
+        await asyncio.wait({task}, timeout=timeout)
+        return self.pipeline(pipeline_id)
+
     def pipeline(self, pipeline_id: str) -> dict:
         if pipeline_id not in self._pipelines:
             raise KeyError(f"未知 pipeline: {pipeline_id}")

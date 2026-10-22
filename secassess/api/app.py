@@ -1,0 +1,271 @@
+"""非阻塞 REST + SSE 接口（FastAPI，可选依赖：pip install 'secassess[api]'）。
+
+认证：请求头 X-API-Key → Principal（RBAC + 项目隔离）。长动作一律 202 + 轮询/SSE。
+"""
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
+
+from ..core.hitl import ApprovalError
+from ..core.rbac import Permission, PermissionDenied, Principal
+from ..core.scope_gate import ScopePolicy
+from ..data.vault import VaultError
+from ..models import FindingStatus, Severity
+from ..platform import Platform
+from ..reports.engine import build_report, render_docx, render_html, render_markdown
+
+
+class ScanBody(BaseModel):
+    project_id: str
+    agent: str = Field(description="asset | vuln | baseline")
+    targets: list[str] | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+    credential_ref: str | None = None
+    adapter: str | None = None
+
+
+class PipelineBody(BaseModel):
+    project_id: str
+    seeds: list[str]
+    credential_ref: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionBody(BaseModel):
+    comment: str = ""
+
+
+class ReviewBody(BaseModel):
+    status: FindingStatus
+    comment: str = ""
+
+
+class CredentialBody(BaseModel):
+    name: str
+    value: str
+
+
+def create_app(platform: Platform) -> FastAPI:
+    # 所有路由都是 async：JobManager 的任务必须在同一个事件循环里创建和取消（不能在线程池里调用）。
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        await platform.jobs.shutdown()
+
+    app = FastAPI(title="SecAssess", version="0.3.0", lifespan=lifespan)
+    orch = platform.orchestrator
+
+    def principal(x_api_key: str | None = Header(default=None)) -> Principal:
+        user = platform.api_keys.get(x_api_key or "")
+        if user is None:
+            raise HTTPException(401, "缺少或无效的 X-API-Key")
+        return user
+
+    def need(p: Principal, perm: Permission, project_id: str | None = None) -> None:
+        try:
+            p.require(perm, project_id)
+        except PermissionDenied as exc:
+            raise HTTPException(403, str(exc)) from None
+
+    def job_project(job_id: str) -> str:
+        try:
+            return platform.jobs.get(job_id).request.project_id
+        except KeyError:
+            raise HTTPException(404, "job 不存在") from None
+
+    @app.exception_handler(PermissionDenied)
+    async def _denied(_req: Request, exc: PermissionDenied):
+        return JSONResponse({"detail": str(exc)}, status_code=403)
+
+    @app.exception_handler(ApprovalError)
+    async def _approval(_req: Request, exc: ApprovalError):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
+
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "ok"}
+
+    # —— L0 输入 ——
+    @app.put("/projects/{project_id}/scope")
+    async def set_scope(project_id: str, body: dict, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.INTEGRATE, project_id)
+        try:
+            policy = ScopePolicy.from_dict({**body, "project_id": project_id})
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, f"授权策略无效: {exc}") from None
+        platform.gate.set_policy(policy)
+        platform.audit.record(actor=p.user, action="scope.set", project_id=project_id,
+                              detail=policy.to_dict(), basis=policy.authorization_ref)
+        return policy.to_dict()
+
+    @app.get("/projects/{project_id}/scope")
+    async def get_scope(project_id: str, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, project_id)
+        policy = platform.gate.policy(project_id)
+        if policy is None:
+            raise HTTPException(404, "未配置授权范围")
+        return policy.to_dict()
+
+    @app.post("/projects/{project_id}/credentials", status_code=201)
+    async def add_credential(project_id: str, body: CredentialBody, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.INTEGRATE, project_id)
+        try:
+            ref = platform.vault.put(f"{project_id}.{body.name}", body.value)
+        except VaultError as exc:
+            raise HTTPException(400, str(exc)) from None
+        platform.audit.record(actor=p.user, action="credential.add", project_id=project_id, detail={"ref": ref})
+        return {"credential_ref": ref}
+
+    @app.get("/adapters")
+    async def adapters(p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW)
+        return platform.registry.describe()
+
+    # —— 扫描（非阻塞）——
+    @app.post("/scans", status_code=202)
+    async def submit_scan(body: ScanBody, p: Principal = Depends(principal)):
+        try:
+            outcome = orch.execute(body.agent, body.project_id, p, targets=body.targets, options=body.options,
+                                   credential_ref=body.credential_ref, adapter=body.adapter)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from None
+        if outcome["state"] == "denied":
+            return JSONResponse(outcome, status_code=403)
+        return outcome
+
+    @app.get("/scans")
+    async def list_scans(project_id: str, p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, project_id)
+        return platform.jobs.list(project_id)
+
+    @app.get("/scans/{job_id}")
+    async def scan_status(job_id: str, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, job_project(job_id))
+        return platform.jobs.status(job_id)
+
+    @app.get("/scans/{job_id}/results")
+    async def scan_results(job_id: str, p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, job_project(job_id))
+        return [f.to_dict() for f in platform.jobs.results(job_id)]
+
+    @app.get("/scans/{job_id}/stream")
+    async def scan_stream(job_id: str, p: Principal = Depends(principal)) -> StreamingResponse:
+        need(p, Permission.VIEW, job_project(job_id))
+
+        async def events():
+            async for view in platform.jobs.stream(job_id):
+                yield f"event: status\ndata: {json.dumps(view, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache"})
+
+    @app.post("/scans/{job_id}/cancel")
+    async def scan_cancel(job_id: str, p: Principal = Depends(principal)) -> dict:
+        project_id = job_project(job_id)
+        need(p, Permission.SCAN, project_id)
+        cancelled = platform.jobs.cancel(job_id)
+        platform.audit.record(actor=p.user, action="scan.cancel", project_id=project_id,
+                              detail={"job_id": job_id, "cancelled": cancelled})
+        return {"job_id": job_id, "cancelled": cancelled}
+
+    # —— HITL ——
+    @app.get("/approvals")
+    async def approvals(project_id: str, state: str | None = None, p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, project_id)
+        return [a.view() for a in platform.gate.approvals.list(project_id, state)]
+
+    @app.post("/approvals/{approval_id}/approve")
+    async def approve(approval_id: str, body: DecisionBody, p: Principal = Depends(principal)) -> dict:
+        return orch.approve(approval_id, p, body.comment)
+
+    @app.post("/approvals/{approval_id}/reject")
+    async def reject(approval_id: str, body: DecisionBody, p: Principal = Depends(principal)) -> dict:
+        return orch.reject(approval_id, p, body.comment)
+
+    @app.post("/approvals/{approval_id}/resume", status_code=202)
+    async def resume(approval_id: str, p: Principal = Depends(principal)):
+        outcome = orch.resume(approval_id, p)
+        return JSONResponse(outcome, status_code=403) if outcome["state"] == "denied" else outcome
+
+    # —— 主干流水线 ——
+    @app.post("/pipelines", status_code=202)
+    async def start_pipeline(body: PipelineBody, p: Principal = Depends(principal)) -> dict:
+        pipeline_id = orch.start_pipeline(body.project_id, body.seeds, p, credential_ref=body.credential_ref,
+                                          options=body.options)
+        return {"pipeline_id": pipeline_id}
+
+    @app.get("/pipelines/{pipeline_id}")
+    async def pipeline(pipeline_id: str, wait: float = 0, p: Principal = Depends(principal)) -> dict:
+        """wait>0 时长轮询：最多等待 wait 秒（上限 60）直到流水线结束。"""
+        try:
+            view = orch.pipeline(pipeline_id)
+        except KeyError:
+            raise HTTPException(404, "pipeline 不存在") from None
+        need(p, Permission.VIEW, view["project_id"])
+        if wait > 0 and view["state"] == "running":
+            view = await orch.wait_pipeline(pipeline_id, timeout=min(wait, 60.0))
+        return view
+
+    # —— 事实源 ——
+    @app.get("/findings")
+    async def findings(project_id: str, category: str | None = None, status: str | None = None,
+                 min_severity: str | None = None, p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, project_id)
+        return [f.to_dict() for f in platform.evidence.query(project_id, category=category, status=status,
+                                                             min_severity=min_severity)]
+
+    @app.patch("/findings/{finding_id}")
+    async def review_finding(finding_id: str, body: ReviewBody, p: Principal = Depends(principal)) -> dict:
+        finding = platform.evidence.get(finding_id)
+        if finding is None:
+            raise HTTPException(404, "发现不存在")
+        need(p, Permission.SCAN, finding.project_id)
+        if body.status == FindingStatus.ACCEPTED and finding.severity.rank >= Severity.HIGH.rank:
+            need(p, Permission.APPROVE, finding.project_id)  # 高危风险接受属于 HITL 范畴
+        previous = finding.status
+        finding.status = body.status
+        finding.details["review"] = {"by": p.user, "comment": body.comment, "previous": previous.value}
+        platform.evidence.update(finding)
+        platform.audit.record(actor=p.user, action="finding.review", project_id=finding.project_id,
+                              target=finding.target, detail={"finding_id": finding_id, "from": previous.value,
+                                                             "to": body.status.value, "comment": body.comment})
+        return finding.to_dict()
+
+    @app.get("/assets")
+    async def assets(project_id: str, kind: str | None = None, p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, project_id)
+        return platform.graph.nodes(project_id, kind)
+
+    # —— 输出 ——
+    @app.get("/reports/{project_id}")
+    async def report(project_id: str, format: str = "md", p: Principal = Depends(principal)) -> Response:
+        need(p, Permission.REPORT, project_id)
+        model = build_report(project_id, platform.evidence, platform.graph, platform.gate.policy(project_id))
+        platform.audit.record(actor=p.user, action="report.generate", project_id=project_id, detail={"format": format})
+        if format == "md":
+            return PlainTextResponse(render_markdown(model), media_type="text/markdown; charset=utf-8")
+        if format == "html":
+            return HTMLResponse(render_html(model))
+        if format == "docx":
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                try:
+                    path = render_docx(model, f"{tmp}/report.docx")
+                except ImportError:
+                    raise HTTPException(501, "未安装 python-docx") from None
+                data = open(path, "rb").read()
+            return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        raise HTTPException(400, "format 只能是 md | html | docx")
+
+    @app.get("/audit")
+    async def audit(project_id: str, limit: int = 200, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, project_id)
+        return {"chain_valid": platform.audit.verify_chain(), "entries": platform.audit.entries(project_id, limit)}
+
+    return app
