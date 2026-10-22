@@ -12,6 +12,7 @@ from .core.rbac import Principal, Role
 from .platform import Platform
 from .copilot.harness import run_to_completion
 from .copilot.qa import answer as qa_answer
+from .compliance.mapper import build_matrix
 from .reports.engine import build_report, render_html, render_markdown
 
 SCOPE = {
@@ -91,9 +92,17 @@ async def _demo(out_dir: Path) -> None:
     print(f"  问答: {ask['answer']}")
     check(ask["filters"]["min_severity"] == "high", "问答未按高危过滤")
 
-    print("== 6. 报告 ==")
+    print("== 6. 合规矩阵 ==")
+    matrix = build_matrix(platform.evidence, "demo",
+                          manual_evidence={"CIS-v8|14": "已完成年度安全意识培训"}).to_dict()
+    print(f"  {matrix['summary']}")
+    for c in matrix["controls"][:4]:
+        print(f"  {c['framework']} {c['control_id']:<6} {c['status']:<11} {c['title']}")
+
+    print("== 7. 报告 ==")
     out_dir.mkdir(parents=True, exist_ok=True)
-    model = build_report("demo", platform.evidence, platform.graph, platform.gate.policy("demo"))
+    model = build_report("demo", platform.evidence, platform.graph, platform.gate.policy("demo"),
+                         compliance=matrix)
     md_path, html_path = out_dir / "demo-report.md", out_dir / "demo-report.html"
     md_path.write_text(render_markdown(model), encoding="utf-8")
     html_path.write_text(render_html(model), encoding="utf-8")

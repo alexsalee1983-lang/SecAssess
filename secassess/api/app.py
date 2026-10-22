@@ -18,6 +18,7 @@ from ..core.scope_gate import ScopePolicy
 from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
 from ..platform import Platform
+from ..compliance.mapper import build_matrix
 from ..copilot.qa import answer as qa_answer
 from ..reports.engine import build_report, render_docx, render_html, render_markdown
 
@@ -285,9 +286,12 @@ def create_app(platform: Platform) -> FastAPI:
 
     # —— 输出 ——
     @app.get("/reports/{project_id}")
-    async def report(project_id: str, format: str = "md", p: Principal = Depends(principal)) -> Response:
+    async def report(project_id: str, format: str = "md", compliance: bool = True,
+                     p: Principal = Depends(principal)) -> Response:
         need(p, Permission.REPORT, project_id)
-        model = build_report(project_id, platform.evidence, platform.graph, platform.gate.policy(project_id))
+        matrix = build_matrix(platform.evidence, project_id).to_dict() if compliance else None
+        model = build_report(project_id, platform.evidence, platform.graph, platform.gate.policy(project_id),
+                             compliance=matrix)
         platform.audit.record(actor=p.user, action="report.generate", project_id=project_id, detail={"format": format})
         if format == "md":
             return PlainTextResponse(render_markdown(model), media_type="text/markdown; charset=utf-8")
@@ -303,6 +307,11 @@ def create_app(platform: Platform) -> FastAPI:
                 data = open(path, "rb").read()
             return Response(data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         raise HTTPException(400, "format 只能是 md | html | docx")
+
+    @app.get("/compliance/{project_id}")
+    async def compliance(project_id: str, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, project_id)
+        return build_matrix(platform.evidence, project_id).to_dict()
 
     @app.get("/audit")
     async def audit(project_id: str, limit: int = 200, p: Principal = Depends(principal)) -> dict:

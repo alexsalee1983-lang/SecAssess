@@ -27,6 +27,7 @@ class ReportModel:
     findings: list[dict]
     severity_counts: dict[str, int] = field(default_factory=dict)
     category_counts: dict[str, int] = field(default_factory=dict)
+    compliance: dict | None = None  # ComplianceMatrix.to_dict()
 
 
 def evidence_chain(f: NormalizedFinding, graph: AssetGraph) -> list[str]:
@@ -42,7 +43,8 @@ def evidence_chain(f: NormalizedFinding, graph: AssetGraph) -> list[str]:
 
 
 def build_report(project_id: str, evidence: EvidenceStore, graph: AssetGraph,
-                 policy: ScopePolicy | None = None, include_closed: bool = False) -> ReportModel:
+                 policy: ScopePolicy | None = None, include_closed: bool = False,
+                 compliance: dict | None = None) -> ReportModel:
     findings = [f for f in evidence.query(project_id)
                 if include_closed or f.status not in (FindingStatus.FALSE_POSITIVE,)]
     issues = [f for f in findings if f.category != Category.ASSET]
@@ -57,7 +59,7 @@ def build_report(project_id: str, evidence: EvidenceStore, graph: AssetGraph,
         project_id=project_id, authorization_ref=policy.authorization_ref if policy else "（未录入）",
         generated_at=utcnow().isoformat(), assets=graph.nodes(project_id, "asset"),
         services=graph.nodes(project_id, "service"), findings=rows,
-        severity_counts=sev_counts, category_counts=cat_counts)
+        severity_counts=sev_counts, category_counts=cat_counts, compliance=compliance)
 
 
 def _md(text) -> str:
@@ -81,6 +83,15 @@ def render_markdown(r: ReportModel) -> str:
                   f"置信度：{f['confidence']}；状态：{f['status']}",
                   f"- 整改建议：{_md(f['remediation'] or '—')}", "- 证据链："]
         lines += [f"  - {_md(c)}" for c in f["evidence_chain"]]
+        lines.append("")
+    if r.compliance:
+        s = r.compliance["summary"]
+        lines += ["## 合规矩阵", "",
+                  f"- 覆盖 {s['covered']}；缺口 {s['gap']}；无证据 {s['no_evidence']}", "",
+                  "| 框架 | 控制项 | 主题 | 状态 | 未关闭发现 |", "|---|---|---|---|---|"]
+        for c in r.compliance["controls"]:
+            lines.append(f"| {c['framework']} | {c['control_id']} | {_md(c['title'])} | {c['status']} "
+                         f"| {len(c['open_finding_ids'])} |")
         lines.append("")
     return "\n".join(lines)
 
@@ -110,7 +121,21 @@ def render_html(r: ReportModel) -> str:
         f"资产数：{len(r.assets)}；服务数：{len(r.services)}；问题数：{len(r.findings)}</p>"
         f"<h2>概览</h2><table><tr><th>严重性</th><th>数量</th></tr>{sev_rows}</table>"
         f"<h2>资产清单</h2><table><tr><th>资产</th></tr>{asset_rows}</table>"
-        f"<h2>发现明细</h2>{''.join(items)}</body></html>")
+        f"<h2>发现明细</h2>{''.join(items)}{_compliance_html(r)}</body></html>")
+
+
+def _compliance_html(r: ReportModel) -> str:
+    if not r.compliance:
+        return ""
+    e = html.escape
+    rows = "".join(
+        f"<tr class='c-{e(c['status'])}'><td>{e(c['framework'])}</td><td>{e(c['control_id'])}</td>"
+        f"<td>{e(c['title'])}</td><td>{e(c['status'])}</td><td>{len(c['open_finding_ids'])}</td></tr>"
+        for c in r.compliance["controls"])
+    s = r.compliance["summary"]
+    return (f"<h2>合规矩阵</h2><p>覆盖 {s['covered']}；缺口 {s['gap']}；无证据 {s['no_evidence']}</p>"
+            "<table><tr><th>框架</th><th>控制项</th><th>主题</th><th>状态</th><th>未关闭发现</th></tr>"
+            f"{rows}</table>")
 
 
 def render_docx(r: ReportModel, path: str) -> str:

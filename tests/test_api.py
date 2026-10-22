@@ -125,6 +125,15 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(audit["chain_valid"])
         self.assertIn("finding.review", {e["action"] for e in audit["entries"]})
 
+    def test_compliance_matrix_and_report(self):
+        self.client.post("/copilot/runs", json={"project_id": "p1",
+                         "instruction": "对 192.0.2.0/28 做资产测绘和漏洞扫描"}, headers=ALICE)
+        matrix = self.client.get("/compliance/p1", headers=CLIENT).json()
+        self.assertIn("summary", matrix)
+        self.assertTrue(any(c["framework"] == "CIS-v8" for c in matrix["controls"]))
+        md = self.client.get("/reports/p1", params={"format": "md"}, headers=ALICE)
+        self.assertIn("合规矩阵", md.text)
+
     def test_copilot_run_and_ask(self):
         resp = self.client.post("/copilot/runs", json={"project_id": "p1",
                                 "instruction": "对 192.0.2.0/28 做资产测绘和漏洞扫描"}, headers=ALICE)
