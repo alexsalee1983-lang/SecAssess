@@ -36,6 +36,7 @@ from .core.risk import RiskScorer
 from .core.orchestrator import Orchestrator
 from .core.rbac import Principal
 from .core.scope_gate import ScopeGate
+from .core.tenancy import DEFAULT_TENANT, TenantRegistry
 from .data.asset_graph import AssetGraph
 from .data.evidence import EvidenceStore
 from .data.facts import FactStore
@@ -59,6 +60,7 @@ class Platform:
     vault: Vault
     orchestrator: Orchestrator
     copilot: CopilotHarness
+    tenants: TenantRegistry
     lifecycle: LifecycleManager
     validator: ExploitabilityValidator
     api_keys: dict[str, Principal]
@@ -95,16 +97,21 @@ class Platform:
             registry.register(MCPToolAdapter(
                 spec["name"], list(spec["command"]), spec["tool_name"], scan_types=set(spec["scan_types"]),
                 vault=vault, evidence_sink=evidence.put_raw, **{k: v for k, v in spec.items() if k in _MCP_KEYS}))
+        tenants = TenantRegistry()
+        project_tenants = config.get("project_tenants", {})
         for scope in config.get("scopes", []):
-            gate.set_policy(load_policy(scope if isinstance(scope, dict) else Path(base, scope)))
-        api_keys = {key: Principal(v["user"], v["role"], frozenset(v.get("projects", ["*"])))
+            policy = load_policy(scope if isinstance(scope, dict) else Path(base, scope))
+            gate.set_policy(policy)
+            tenants.set_project_tenant(policy.project_id, project_tenants.get(policy.project_id, DEFAULT_TENANT))
+        api_keys = {key: Principal(v["user"], v["role"], frozenset(v.get("projects", ["*"])),
+                                   v.get("tenant", DEFAULT_TENANT))
                     for key, v in config.get("api_keys", {}).items()}
         orchestrator = Orchestrator(registry=registry, gate=gate, jobs=jobs, facts=facts, audit=audit, vault=vault)
         copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
         lifecycle = LifecycleManager(evidence)
         validator = ExploitabilityValidator(evidence)
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   lifecycle, validator, api_keys)
+                   tenants, lifecycle, validator, api_keys)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

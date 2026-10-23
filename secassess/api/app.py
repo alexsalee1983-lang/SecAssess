@@ -112,6 +112,8 @@ def create_app(platform: Platform) -> FastAPI:
 
     def need(p: Principal, perm: Permission, project_id: str | None = None) -> None:
         try:
+            if project_id is not None:
+                platform.tenants.require_access(p, project_id)  # 跨租户硬隔离，先于 RBAC
             p.require(perm, project_id)
         except PermissionDenied as exc:
             raise HTTPException(403, str(exc)) from None
@@ -137,6 +139,8 @@ def create_app(platform: Platform) -> FastAPI:
     # —— L0 输入 ——
     @app.put("/projects/{project_id}/scope")
     async def set_scope(project_id: str, body: dict, p: Principal = Depends(principal)) -> dict:
+        if not platform.tenants.is_registered(project_id):
+            platform.tenants.set_project_tenant(project_id, p.tenant)  # 新项目归属创建者所在租户
         need(p, Permission.INTEGRATE, project_id)
         try:
             policy = ScopePolicy.from_dict({**body, "project_id": project_id})

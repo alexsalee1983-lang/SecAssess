@@ -37,6 +37,7 @@ class Principal:
     user: str
     role: Role
     projects: frozenset[str] = field(default_factory=lambda: frozenset({"*"}))
+    tenant: str = "default"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", Role(self.role))
