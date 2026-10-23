@@ -116,6 +116,13 @@ class ApiM3Test(unittest.TestCase):
         self.assertEqual(self.client.patch(f"/tickets/{tid}", json={"status": "resolved"},
                                            headers=CLIENT).status_code, 403)
 
+    def test_siem_events_endpoint(self):
+        self.client.post("/projects/p1/imports/nessus", json={"xml": NESSUS}, headers=LEAD)
+        res = self.client.get("/siem/p1/events", headers=CLIENT).json()
+        self.assertGreater(res["count"], 0)
+        self.assertTrue(any(e["type"] == "finding" for e in res["events"]))
+        self.assertTrue(any(e["type"] == "audit" for e in res["events"]))
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')

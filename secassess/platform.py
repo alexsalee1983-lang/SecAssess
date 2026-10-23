@@ -42,6 +42,7 @@ from .data.evidence import EvidenceStore
 from .data.facts import FactStore
 from .data.vault import Vault
 from .inputs.scope_loader import load_policy
+from .integrations.sso import ApiKeyProvider, AuthProvider
 from .remediation.tickets import TicketStore
 from .inputs.threat_intel import load_threat_intel
 from .models import ScanType
@@ -66,6 +67,7 @@ class Platform:
     validator: ExploitabilityValidator
     tickets: TicketStore
     api_keys: dict[str, Principal]
+    auth: AuthProvider
 
     @classmethod
     def create(cls, config: dict | None = None, *, base_dir: str | Path = ".") -> "Platform":
@@ -113,8 +115,9 @@ class Platform:
         lifecycle = LifecycleManager(evidence)
         validator = ExploitabilityValidator(evidence)
         tickets = TicketStore(db("tickets.db"))
+        auth = ApiKeyProvider(api_keys)
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   tenants, lifecycle, validator, tickets, api_keys)
+                   tenants, lifecycle, validator, tickets, api_keys, auth)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

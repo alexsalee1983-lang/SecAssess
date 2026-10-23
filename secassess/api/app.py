@@ -16,6 +16,8 @@ from ..core.hitl import ApprovalError
 from ..core.rbac import Permission, PermissionDenied, Principal
 from ..core.scope_gate import ScopePolicy
 from ..core.validator import Hypothesis
+from ..integrations.siem import collect_events
+from ..integrations.sso import AuthError
 from ..remediation.tickets import TicketError
 from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
@@ -115,10 +117,10 @@ def create_app(platform: Platform) -> FastAPI:
     orch = platform.orchestrator
 
     def principal(x_api_key: str | None = Header(default=None)) -> Principal:
-        user = platform.api_keys.get(x_api_key or "")
-        if user is None:
-            raise HTTPException(401, "缺少或无效的 X-API-Key")
-        return user
+        try:
+            return platform.auth.resolve(x_api_key)
+        except AuthError as exc:
+            raise HTTPException(401, str(exc)) from None
 
     def need(p: Principal, perm: Permission, project_id: str | None = None) -> None:
         try:
@@ -482,6 +484,12 @@ def create_app(platform: Platform) -> FastAPI:
         platform.audit.record(actor=p.user, action="ticket.update", project_id=ticket.project_id,
                               detail={"ticket_id": ticket_id, "status": ticket.status.value})
         return ticket.to_dict()
+
+    @app.get("/siem/{project_id}/events")
+    async def siem_events(project_id: str, p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW, project_id)
+        events = collect_events(platform.evidence, project_id, platform.audit.entries(project_id, 500))
+        return {"project_id": project_id, "count": len(events), "events": events}
 
     @app.get("/audit")
     async def audit(project_id: str, limit: int = 200, p: Principal = Depends(principal)) -> dict:
