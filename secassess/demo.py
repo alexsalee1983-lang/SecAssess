@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .core.rbac import Principal, Role
+from .core.selfcheck import run_self_check
 from .platform import Platform
 from .copilot.harness import run_to_completion
 from .copilot.qa import answer as qa_answer
@@ -111,6 +112,14 @@ async def _demo(out_dir: Path) -> None:
     print(f"  报告: {html_path}")
     check(platform.audit.verify_chain(), "审计哈希链校验失败")
     print(f"  审计日志 {len(platform.audit.entries('demo'))} 条，哈希链完整")
+
+    print("== 8. 平台基线自检（M5 出口）==")
+    report = run_self_check(platform)
+    for c in report["checks"]:
+        mark = "✓" if c["passed"] else ("!" if c["severity"] == "high" else "~")
+        print(f"  [{mark}] {c['id']}")
+    print(f"  硬控制达标: {report['passed']}；warn: {report['warnings']}")
+    check(report["passed"], f"平台基线自检未通过: {report['hard_failures']}")
     await jobs.shutdown()
 
 

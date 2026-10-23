@@ -131,6 +131,15 @@ class ApiM3Test(unittest.TestCase):
         glob = self.client.get("/metrics", headers=LEAD).json()
         self.assertIn("findings", glob)
 
+    def test_selfcheck_endpoint(self):
+        r = self.client.get("/selfcheck", headers=LEAD).json()
+        self.assertIn("passed", r)
+        self.assertTrue(any(c["id"] == "gate_fail_closed" for c in r["checks"]))
+        self.assertEqual(self.client.get("/selfcheck").status_code, 401)  # 需认证
+
+    def test_content_endpoint_empty(self):
+        self.assertEqual(self.client.get("/content", headers=ALICE).json(), [])
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')

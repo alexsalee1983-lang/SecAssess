@@ -17,6 +17,7 @@ from ..core.rbac import Permission, PermissionDenied, Principal
 from ..core.scope_gate import ScopePolicy
 from ..core.validator import Hypothesis
 from ..core.metrics import collect as collect_metrics
+from ..core.selfcheck import run_self_check
 from ..integrations.siem import collect_events
 from ..integrations.sso import AuthError
 from ..remediation.tickets import TicketError
@@ -486,6 +487,11 @@ def create_app(platform: Platform) -> FastAPI:
         platform.audit.record(actor=p.user, action="ticket.update", project_id=ticket.project_id,
                               detail={"ticket_id": ticket_id, "status": ticket.status.value})
         return ticket.to_dict()
+
+    @app.get("/selfcheck")
+    async def selfcheck(p: Principal = Depends(principal)) -> dict:
+        need(p, Permission.VIEW)  # 平台级基线自检
+        return run_self_check(platform)
 
     @app.get("/content")
     async def content(kind: str | None = None, status: str | None = None,

@@ -3,9 +3,10 @@
 面向**授权范围内**的防御性安全评估工具箱：资产测绘 → 漏洞扫描 → 配置基线，在同一事实源中贯通并出报告。
 架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，分步计划与完成标准见 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)。
 
-当前进度：**M0–M4 已完成**（M0 异步内核与契约、M1 主干三件套、M2 编排与协同、M3 治理与事实源、
-M4 对标顶级升级）。M5 企业化（分布式扫描节点、多租户、SSO/SIEM/ITSM 集成、部署形态）依赖
-ARCHITECTURE.md §15 的待确认事项，尚未开始。扫描引擎目前是 mock 适配器（合成占位结果，无网络流量）
+当前进度：**M0–M4 完成；M5 完成不依赖外部基础设施的部分**（多租户隔离、整改工单、SSO/SIEM/ITSM
+接口、可观测性、内容更新流水线、平台基线自检）。§15 已确认：部署＝客户本地/私有化、凭证＝自建
+HashiCorp Vault、合规＝等保 2.0 + ISO 27001 + CIS。**留待对接基础设施**：分布式扫描 worker
+（Redis + Celery/RQ）、真实 SSO/SIEM/ITSM 服务、Vault 生产部署。扫描引擎目前是 mock 适配器（合成占位结果，无网络流量）
 加一个通用 MCP 适配器，真实引擎通过 MCP server 在运行时接入。
 
 ## 快速上手
@@ -71,6 +72,9 @@ bash scripts/smoke_api.sh            # API 冒烟测试（自动启停服务）
 | POST | `/exposure/{pid}` | 攻击路径 + choke-point | view |
 | POST | `/findings/{id}/validate` | 确定性可利用性验证（侵入式需审批） | scan |
 | GET | `/findings/{id}/evidence` | 证据链 + 原始证据完整性校验 | view |
+| POST/GET/PATCH | `/findings/{id}/ticket`、`/tickets`、`/tickets/{id}` | 整改工单（开单/列表/状态流转） | scan / view / scan |
+| GET | `/siem/{pid}/events` | SIEM 事件导出（发现 + 审计） | view |
+| GET | `/metrics`、`/content`、`/selfcheck` | 平台指标 / 内容包 / 基线自检 | view |
 | GET | `/assets`、`/reports/{pid}?format=md\|html\|docx`、`/audit` | 资产 / 报告（含合规矩阵）/ 审计 | view / report / view |
 
 ## 使用边界
