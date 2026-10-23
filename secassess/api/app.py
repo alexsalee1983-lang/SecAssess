@@ -16,6 +16,7 @@ from ..core.hitl import ApprovalError
 from ..core.rbac import Permission, PermissionDenied, Principal
 from ..core.scope_gate import ScopePolicy
 from ..core.validator import Hypothesis
+from ..core.metrics import collect as collect_metrics
 from ..integrations.siem import collect_events
 from ..integrations.sso import AuthError
 from ..remediation.tickets import TicketError
@@ -194,6 +195,7 @@ def create_app(platform: Platform) -> FastAPI:
                                    credential_ref=body.credential_ref, adapter=body.adapter)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from None
+        platform.metrics.incr(f"scan.{outcome['state']}")
         if outcome["state"] == "denied":
             return JSONResponse(outcome, status_code=403)
         return outcome
@@ -484,6 +486,15 @@ def create_app(platform: Platform) -> FastAPI:
         platform.audit.record(actor=p.user, action="ticket.update", project_id=ticket.project_id,
                               detail={"ticket_id": ticket_id, "status": ticket.status.value})
         return ticket.to_dict()
+
+    @app.get("/metrics")
+    async def metrics(project_id: str | None = None, p: Principal = Depends(principal)) -> dict:
+        if project_id is not None:
+            need(p, Permission.VIEW, project_id)
+            return collect_metrics(platform, [project_id], single=project_id)
+        # 全局指标仅覆盖调用方所在租户的项目（跨租户隔离）
+        pids = [pid for pid in platform.evidence.projects() if platform.tenants.can_access(p, pid)]
+        return collect_metrics(platform, pids)
 
     @app.get("/siem/{project_id}/events")
     async def siem_events(project_id: str, p: Principal = Depends(principal)) -> dict:

@@ -117,6 +117,9 @@ class EvidenceStore:
         items.sort(key=lambda f: (-(f.risk_score or 0.0), -f.severity.rank, f.category.value, f.target))
         return items
 
+    def projects(self) -> list[str]:
+        return [r[0] for r in self._db.execute("SELECT DISTINCT project_id FROM findings ORDER BY project_id")]
+
     def _save(self, f: NormalizedFinding) -> None:
         self._db.execute(
             "INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(finding_id) DO UPDATE SET "

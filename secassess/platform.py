@@ -31,6 +31,7 @@ from .core.audit import AuditLog
 from .core.jobs import JobManager
 from .copilot.harness import CopilotHarness
 from .core.lifecycle import LifecycleManager
+from .core.metrics import MetricsRegistry
 from .core.validator import ExploitabilityValidator
 from .core.risk import RiskScorer
 from .core.orchestrator import Orchestrator
@@ -68,6 +69,7 @@ class Platform:
     tickets: TicketStore
     api_keys: dict[str, Principal]
     auth: AuthProvider
+    metrics: MetricsRegistry
 
     @classmethod
     def create(cls, config: dict | None = None, *, base_dir: str | Path = ".") -> "Platform":
@@ -116,8 +118,9 @@ class Platform:
         validator = ExploitabilityValidator(evidence)
         tickets = TicketStore(db("tickets.db"))
         auth = ApiKeyProvider(api_keys)
+        metrics = MetricsRegistry()
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   tenants, lifecycle, validator, tickets, api_keys, auth)
+                   tenants, lifecycle, validator, tickets, api_keys, auth, metrics)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

@@ -123,6 +123,14 @@ class ApiM3Test(unittest.TestCase):
         self.assertTrue(any(e["type"] == "finding" for e in res["events"]))
         self.assertTrue(any(e["type"] == "audit" for e in res["events"]))
 
+    def test_metrics_endpoint(self):
+        self.client.post("/projects/p1/imports/nessus", json={"xml": NESSUS}, headers=LEAD)
+        m = self.client.get("/metrics", params={"project_id": "p1"}, headers=ALICE).json()
+        self.assertGreaterEqual(m["findings"]["total"], 1)
+        self.assertIn("by_state", m["jobs"])
+        glob = self.client.get("/metrics", headers=LEAD).json()
+        self.assertIn("findings", glob)
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')
