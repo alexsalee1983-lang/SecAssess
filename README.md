@@ -40,6 +40,26 @@ bash scripts/smoke_api.sh            # API 冒烟测试（自动启停服务）
 | L6 输出 | `reports/engine.py`：Markdown / HTML / DOCX，含证据链 |
 | API | `api/app.py`：REST + SSE，`X-API-Key` 认证 |
 
+## 接入大模型规划器（DeepSeek 等国产模型）
+
+Copilot 的规划器默认是确定性的规则规划器；也可接入 OpenAI 兼容的国产大模型（DeepSeek / 通义千问 /
+Kimi / 智谱 GLM）。模型只负责**提议**步骤，所有提议仍须经白名单、种子范围校验、Scope Gate 与 HITL，
+模型拿不到也无法伪造 scope_token / approval_id；调用失败或无 Key 时自动回退到规则规划器。
+
+```bash
+export DEEPSEEK_API_KEY=sk-...                     # 或 DASHSCOPE_API_KEY / MOONSHOT_API_KEY / ZHIPUAI_API_KEY
+python scripts/deepseek_smoke.py --provider deepseek   # 实连冒烟（无 Key 时自动跳过）
+```
+
+平台配置里打开（见 `examples/platform_llm.json`）：
+
+```json
+{"llm_planner": {"provider": "deepseek"}}
+```
+
+`provider` 可选 `deepseek` / `qwen` / `moonshot` / `zhipu`，也可自定义 `base_url` 与 `model`。
+API Key 从对应环境变量读取，不写入日志、发现或提示词。
+
 ## 接入真实引擎（MCP）
 
 把 MCP server 写进平台配置的 `mcp_adapters`（样例见 `examples/mcp_adapters.json`）：

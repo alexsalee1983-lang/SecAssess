@@ -52,6 +52,20 @@ from .models import ScanType
 _MCP_KEYS = {"engine", "engine_version", "intrusive_level", "needs_credential", "default_category"}
 
 
+def _build_planner(cfg):
+    """按配置构造 LLM 规划器；未配置或缺少 Key 时返回 None（Copilot 用规则规划器）。
+
+    配置示例：{"provider": "deepseek"}（API Key 取环境变量，如 DEEPSEEK_API_KEY）。
+    """
+    if not cfg:
+        return None
+    from .copilot.llm_openai import OpenAICompatiblePlanner
+    provider = cfg.get("provider", "deepseek")
+    return OpenAICompatiblePlanner.from_preset(
+        provider, api_key=cfg.get("api_key"),
+        **{k: cfg[k] for k in ("base_url", "model", "timeout") if k in cfg})
+
+
 @dataclass
 class Platform:
     registry: AdapterRegistry
@@ -115,7 +129,9 @@ class Platform:
                                    v.get("tenant", DEFAULT_TENANT))
                     for key, v in config.get("api_keys", {}).items()}
         orchestrator = Orchestrator(registry=registry, gate=gate, jobs=jobs, facts=facts, audit=audit, vault=vault)
-        copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
+        planner = _build_planner(config.get("llm_planner"))
+        copilot = CopilotHarness(orchestrator, planner=planner,
+                                 max_iterations=int(config.get("copilot_max_iterations", 8)))
         lifecycle = LifecycleManager(evidence)
         validator = ExploitabilityValidator(evidence)
         tickets = TicketStore(db("tickets.db"))
