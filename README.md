@@ -15,7 +15,7 @@ HashiCorp Vault、合规＝等保 2.0 + ISO 27001 + CIS。**留待对接基础�
 pip install -e ".[dev,api,docx]"     # 核心零依赖；dev=pytest/ruff，api=fastapi/uvicorn/httpx，docx=python-docx
 python -m pytest tests -q            # 单元测试
 python demo.py                       # 端到端演示，报告写到 reports_out/
-python -m secassess serve --config examples/platform.json   # 启动 API（默认 127.0.0.1:8000）
+python -m secassess serve --config examples/platform.json   # 启动整套系统；浏览器打开 http://127.0.0.1:8000/ 即控制台
 bash scripts/smoke_api.sh            # API 冒烟测试（自动启停服务）
 ```
 

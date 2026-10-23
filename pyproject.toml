@@ -19,6 +19,9 @@ imports = ["defusedxml>=0.7"]
 [tool.setuptools.packages.find]
 include = ["secassess*"]
 
+[tool.setuptools.package-data]
+secassess = ["web/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecAssess 控制台</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --line:#2a3550; --fg:#e6ebf5; --mut:#93a0bd; --acc:#4f8cff;
+          --crit:#b00020; --high:#e65100; --med:#f9a825; --low:#2e7d32; --info:#546e7a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg);
+         color:var(--fg); }
+  header { padding:12px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+           display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  header input { background:#0b0f18; border:1px solid var(--line); color:var(--fg); padding:6px 8px;
+                 border-radius:6px; font-size:13px; }
+  header .key { width:220px; } header .base { width:230px; }
+  button { background:var(--acc); color:#fff; border:0; padding:6px 12px; border-radius:6px; cursor:pointer;
+           font-size:13px; } button.sec { background:#2a3550; }
+  nav { display:flex; gap:4px; padding:8px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+        flex-wrap:wrap; }
+  nav a { padding:6px 12px; border-radius:6px; color:var(--mut); cursor:pointer; font-size:14px; }
+  nav a.active { background:var(--acc); color:#fff; }
+  main { padding:16px; max-width:1100px; margin:0 auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px;
+          margin-bottom:16px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  label { font-size:13px; color:var(--mut); margin-right:4px; }
+  select, textarea, main input { background:#0b0f18; border:1px solid var(--line); color:var(--fg);
+          padding:6px 8px; border-radius:6px; font-size:13px; }
+  textarea { width:100%; min-height:60px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  th,td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--mut); font-weight:600; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:10px; }
+  .tile { background:#0b0f18; border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .tile .n { font-size:24px; font-weight:700; } .tile .l { color:var(--mut); font-size:12px; }
+  .sev-critical{color:var(--crit)} .sev-high{color:var(--high)} .sev-medium{color:var(--med)}
+  .sev-low{color:var(--low)} .sev-info{color:var(--info)}
+  .pill { padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .ok{color:#49d17a} .bad{color:#ff6b6b} .mut{color:var(--mut)}
+  #toast { position:fixed; right:16px; bottom:16px; background:#1b2540; border:1px solid var(--line);
+           padding:10px 14px; border-radius:8px; max-width:360px; font-size:13px; display:none; }
+  pre { white-space:pre-wrap; word-break:break-all; background:#0b0f18; padding:10px; border-radius:8px;
+        font-size:12px; max-height:360px; overflow:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ SecAssess 控制台</h1>
+  <label>API</label><input class="base" id="base" value="">
+  <label>X-API-Key</label><input class="key" id="apikey" value="demo-assessor-key">
+  <label>项目</label><input id="pid" value="demo" style="width:90px">
+  <button class="sec" onclick="refresh()">刷新</button>
+  <span id="who" class="mut"></span>
+</header>
+<nav id="nav"></nav>
+<main id="view"></main>
+<div id="toast"></div>
+
+<script>
+const TABS = [
+  ["overview","态势总览"], ["scan","发起扫描"], ["copilot","自然语言 Copilot"],
+  ["approvals","审批队列"], ["findings","事实看板"], ["assets","资产"],
+  ["report","报告"], ["selfcheck","平台自检"]
+];
+let tab = "overview";
+const $ = (id) => document.getElementById(id);
+const base = () => ($("base").value || "").replace(/\/$/,"");
+const pid = () => $("pid").value.trim();
+function toast(msg, bad){ const t=$("toast"); t.textContent=msg; t.style.display="block";
+  t.style.borderColor = bad ? "#ff6b6b" : "#2a3550"; clearTimeout(window._tt);
+  window._tt=setTimeout(()=>t.style.display="none", 4000); }
+async function api(path, opts={}){
+  const h = {"X-API-Key": $("apikey").value, "Content-Type":"application/json"};
+  const r = await fetch(base()+path, {...opts, headers:h});
+  const text = await r.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch(e){ data = text; }
+  if(!r.ok){ throw new Error((data && data.detail) ? data.detail : (r.status+" "+r.statusText)); }
+  return data;
+}
+function sev(s){ return `<span class="sev-${s}">${s}</span>`; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function renderNav(){ $("nav").innerHTML = TABS.map(([k,l])=>
+  `<a class="${k===tab?'active':''}" onclick="go('${k}')">${l}</a>`).join(""); }
+function go(k){ tab=k; renderNav(); refresh(); }
+
+async function refresh(){
+  try {
+    const me = await api("/health"); $("who").textContent = "已连接 · "+me.status;
+  } catch(e){ $("who").textContent = "未连接"; }
+  try { await VIEWS[tab](); }
+  catch(e){ $("view").innerHTML = `<div class="card bad">加载失败：${esc(e.message)}</div>`; }
+}
+
+const VIEWS = {
+  async overview(){
+    const m = await api("/metrics?project_id="+encodeURIComponent(pid()));
+    const sv = m.findings.by_severity;
+    $("view").innerHTML = `
+    <div class="card"><div class="tiles">
+      <div class="tile"><div class="n">${m.findings.total}</div><div class="l">发现总数</div></div>
+      <div class="tile"><div class="n sev-critical">${sv.critical||0}</div><div class="l">严重</div></div>
+      <div class="tile"><div class="n sev-high">${sv.high||0}</div><div class="l">高危</div></div>
+      <div class="tile"><div class="n sev-medium">${sv.medium||0}</div><div class="l">中危</div></div>
+      <div class="tile"><div class="n">${m.jobs.total}</div><div class="l">任务</div></div>
+      <div class="tile"><div class="n">${m.approvals.pending}</div><div class="l">待审批</div></div>
+      <div class="tile"><div class="n">${m.tickets.open}</div><div class="l">未闭环工单</div></div>
+      <div class="tile"><div class="n ${m.audit_chain_valid?'ok':'bad'}">${m.audit_chain_valid?'✓':'✗'}</div>
+        <div class="l">审计链</div></div>
+    </div></div>
+    <div class="card"><b>任务状态</b><pre>${esc(JSON.stringify(m.jobs.by_state,null,2))}</pre></div>`;
+  },
+  async scan(){
+    $("view").innerHTML = `
+    <div class="card">
+      <div class="row">
+        <label>Agent</label>
+        <select id="agent"><option>asset</option><option>vuln</option><option>baseline</option>
+          <option>easm</option><option>webapi</option><option>phishing</option></select>
+        <label>侵入级</label>
+        <select id="profile"><option value="">default</option><option value="deep">deep</option></select>
+        <label>凭证引用</label><input id="cred" placeholder="vault://… (baseline 必填)" style="width:200px">
+      </div>
+      <textarea id="targets" placeholder="目标，逗号或换行分隔，如 192.0.2.0/28"></textarea>
+      <div class="row"><button onclick="submitScan()">提交扫描</button>
+        <span class="mut">越界/高敏会被拒绝或转审批</span></div>
+      <div id="scanres"></div>
+    </div>
+    <div class="card"><b>任务列表</b><div id="joblist">加载中…</div></div>`;
+    await loadJobs();
+  },
+  async copilot(){
+    $("view").innerHTML = `
+    <div class="card">
+      <textarea id="instr" placeholder="用自然语言描述，如：对 192.0.2.0/28 做全面评估"></textarea>
+      <div class="row"><label>凭证引用</label><input id="ccred" placeholder="vault://…" style="width:200px">
+        <button onclick="runCopilot()">运行</button></div>
+      <div id="copres"></div>
+    </div>
+    <div class="card"><b>结果问答</b>
+      <div class="row"><input id="q" placeholder="有哪些高危漏洞？" style="flex:1">
+        <button class="sec" onclick="ask()">提问</button></div>
+      <div id="qares"></div></div>`;
+  },
+  async approvals(){
+    const rows = await api("/approvals?project_id="+encodeURIComponent(pid()));
+    $("view").innerHTML = `<div class="card"><b>审批队列</b><table>
+      <tr><th>ID</th><th>状态</th><th>原因</th><th>申请人</th><th>操作</th></tr>
+      ${rows.map(a=>`<tr><td>${esc(a.approval_id)}</td><td>${esc(a.state)}</td>
+        <td>${esc((a.reasons||[]).join("; "))}</td><td>${esc(a.requested_by)}</td>
+        <td>${a.state==='pending'?`<button onclick="decide('${a.approval_id}','approve')">批准</button>
+          <button class="sec" onclick="decide('${a.approval_id}','reject')">驳回</button>`:''}</td></tr>`).join("")
+        || `<tr><td colspan=5 class="mut">无</td></tr>`}</table>
+      <p class="mut">审批人请把上方 X-API-Key 换成 demo-approver-key。</p></div>`;
+  },
+  async findings(){
+    const rows = await api("/findings?project_id="+encodeURIComponent(pid()));
+    $("view").innerHTML = `<div class="card"><b>事实看板</b>（共 ${rows.length}，按风险排序）<table>
+      <tr><th>风险</th><th>严重性</th><th>类别</th><th>标题</th><th>目标</th><th>置信度</th><th>状态</th></tr>
+      ${rows.slice(0,200).map(f=>`<tr><td>${f.risk_score??''}</td><td>${sev(f.severity)}</td>
+        <td>${esc(f.category)}</td><td>${esc(f.title)}</td><td>${esc(f.target)}</td>
+        <td>${esc(f.confidence)}</td><td>${esc(f.status)}</td></tr>`).join("")
+        || `<tr><td colspan=7 class="mut">暂无发现，先去「发起扫描」或「Copilot」</td></tr>`}</table></div>`;
+  },
+  async assets(){
+    const rows = await api("/assets?project_id="+encodeURIComponent(pid()));
+    $("view").innerHTML = `<div class="card"><b>资产图</b>（${rows.length} 个节点）<table>
+      <tr><th>类型</th><th>键</th><th>属性</th></tr>
+      ${rows.map(n=>`<tr><td>${esc(n.kind)}</td><td>${esc(n.key)}</td>
+        <td class="mut">${esc(JSON.stringify(n.attrs))}</td></tr>`).join("")
+        || `<tr><td colspan=3 class="mut">无</td></tr>`}</table></div>`;
+  },
+  async report(){
+    $("view").innerHTML = `<div class="card"><b>报告</b>
+      <div class="row">
+        <button onclick="openReport('html')">打开 HTML 报告</button>
+        <button class="sec" onclick="openReport('md')">查看 Markdown</button>
+        <button class="sec" onclick="loadCompliance()">合规矩阵</button>
+      </div><div id="rep"></div></div>`;
+  },
+  async selfcheck(){
+    const r = await api("/selfcheck");
+    $("view").innerHTML = `<div class="card"><b>平台基线自检</b>
+      <p>硬控制达标：<span class="${r.passed?'ok':'bad'}">${r.passed?'是':'否'}</span>
+         · warn：${esc((r.warnings||[]).join(", ")||'无')}</p>
+      <table><tr><th>控制</th><th>级别</th><th>结果</th><th>说明</th></tr>
+      ${r.checks.map(c=>`<tr><td>${esc(c.id)}</td><td>${esc(c.severity)}</td>
+        <td class="${c.passed?'ok':(c.severity==='high'?'bad':'mut')}">${c.passed?'✓':(c.severity==='high'?'✗':'~')}</td>
+        <td class="mut">${esc(c.detail)}</td></tr>`).join("")}</table></div>`;
+  },
+};
+
+async function loadJobs(){
+  try {
+    const jobs = await api("/scans?project_id="+encodeURIComponent(pid()));
+    $("joblist").innerHTML = `<table><tr><th>job</th><th>agent</th><th>状态</th><th>进度</th><th>发现</th></tr>
+      ${jobs.map(j=>`<tr><td>${esc(j.job_id)}</td><td>${esc(j.adapter)}</td><td>${esc(j.state)}</td>
+        <td>${Math.round((j.progress||0)*100)}%</td><td>${j.finding_count}</td></tr>`).join("")
+        || `<tr><td colspan=5 class="mut">无</td></tr>`}</table>`;
+  } catch(e){ $("joblist").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+function splitTargets(s){ return s.split(/[\s,]+/).map(x=>x.trim()).filter(Boolean); }
+async function submitScan(){
+  try {
+    const body = {project_id:pid(), agent:$("agent").value, targets:splitTargets($("targets").value),
+      options: $("profile").value ? {profile:$("profile").value} : {}, credential_ref:$("cred").value||null};
+    const r = await fetch(base()+"/scans",{method:"POST",
+      headers:{"X-API-Key":$("apikey").value,"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    const d = await r.json();
+    $("scanres").innerHTML = `<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
+    toast(r.status===202 ? ("已提交："+(d.state||"")) : ("状态 "+r.status+"："+(d.state||d.detail)), r.status>=400);
+    await loadJobs();
+  } catch(e){ toast(e.message, true); }
+}
+async function decide(id, action){
+  try { await api(`/approvals/${id}/${action}`, {method:"POST", body:JSON.stringify({comment:"via console"})});
+    toast("已"+(action==='approve'?'批准':'驳回')); refresh(); }
+  catch(e){ toast(e.message, true); }
+}
+async function runCopilot(){
+  try {
+    const d = await api("/copilot/runs",{method:"POST",
+      body:JSON.stringify({project_id:pid(), instruction:$("instr").value, credential_ref:$("ccred").value||null})});
+    $("copres").innerHTML = `<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
+    toast("Copilot 状态："+d.state + (d.state==='waiting_approval'?'（去审批队列批准后在此继续）':''));
+  } catch(e){ toast(e.message, true); }
+}
+async function ask(){
+  try { const d = await api("/copilot/ask",{method:"POST",
+      body:JSON.stringify({project_id:pid(), question:$("q").value})});
+    $("qares").innerHTML = `<p>${esc(d.answer)}</p><pre>${esc(JSON.stringify(d.references,null,2))}</pre>`;
+  } catch(e){ toast(e.message, true); }
+}
+function openReport(fmt){
+  const url = base()+"/reports/"+encodeURIComponent(pid())+"?format="+fmt;
+  fetch(url,{headers:{"X-API-Key":$("apikey").value}}).then(r=>r.text()).then(t=>{
+    if(fmt==='html'){ const w=window.open("","_blank"); w.document.write(t); w.document.close(); }
+    else { $("rep").innerHTML = `<pre>${esc(t)}</pre>`; }
+  }).catch(e=>toast(e.message,true));
+}
+async function loadCompliance(){
+  const m = await api("/compliance/"+encodeURIComponent(pid()));
+  $("rep").innerHTML = `<p>覆盖 ${m.summary.covered} · 缺口 ${m.summary.gap} · 无证据 ${m.summary.no_evidence}</p>
+    <table><tr><th>框架</th><th>控制项</th><th>主题</th><th>状态</th></tr>
+    ${m.controls.map(c=>`<tr><td>${esc(c.framework)}</td><td>${esc(c.control_id)}</td><td>${esc(c.title)}</td>
+      <td class="${c.status==='gap'?'bad':(c.status==='covered'?'ok':'mut')}">${esc(c.status)}</td></tr>`).join("")}
+    </table>`;
+}
+
+$("base").value = location.origin.startsWith("http") ? location.origin : "http://127.0.0.1:8000";
+renderNav(); refresh();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -149,6 +150,14 @@ def create_app(platform: Platform) -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/", include_in_schema=False)
+    async def console() -> HTMLResponse:
+        html_path = Path(__file__).resolve().parent.parent / "web" / "console.html"
+        try:
+            return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        except OSError:
+            return HTMLResponse("<h1>SecAssess</h1><p>控制台页面缺失，请用 /docs 访问 API。</p>")
 
     # —— L0 输入 ——
     @app.put("/projects/{project_id}/scope")

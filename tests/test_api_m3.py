@@ -140,6 +140,12 @@ class ApiM3Test(unittest.TestCase):
     def test_content_endpoint_empty(self):
         self.assertEqual(self.client.get("/content", headers=ALICE).json(), [])
 
+    def test_console_served_at_root(self):
+        r = self.client.get("/")  # 控制台无需鉴权（页面本身静态，调用 API 时才带 Key）
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("SecAssess", r.text)
+        self.assertIn("X-API-Key", r.text)
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')
