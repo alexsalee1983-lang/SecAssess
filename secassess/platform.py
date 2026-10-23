@@ -42,6 +42,7 @@ from .data.evidence import EvidenceStore
 from .data.facts import FactStore
 from .data.vault import Vault
 from .inputs.scope_loader import load_policy
+from .remediation.tickets import TicketStore
 from .inputs.threat_intel import load_threat_intel
 from .models import ScanType
 
@@ -63,6 +64,7 @@ class Platform:
     tenants: TenantRegistry
     lifecycle: LifecycleManager
     validator: ExploitabilityValidator
+    tickets: TicketStore
     api_keys: dict[str, Principal]
 
     @classmethod
@@ -110,8 +112,9 @@ class Platform:
         copilot = CopilotHarness(orchestrator, max_iterations=int(config.get("copilot_max_iterations", 8)))
         lifecycle = LifecycleManager(evidence)
         validator = ExploitabilityValidator(evidence)
+        tickets = TicketStore(db("tickets.db"))
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   tenants, lifecycle, validator, api_keys)
+                   tenants, lifecycle, validator, tickets, api_keys)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":

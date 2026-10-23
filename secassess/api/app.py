@@ -16,6 +16,7 @@ from ..core.hitl import ApprovalError
 from ..core.rbac import Permission, PermissionDenied, Principal
 from ..core.scope_gate import ScopePolicy
 from ..core.validator import Hypothesis
+from ..remediation.tickets import TicketError
 from ..data.vault import VaultError
 from ..models import FindingStatus, Severity
 from ..platform import Platform
@@ -78,6 +79,15 @@ class ValidateBody(BaseModel):
     kind: str
     params: dict = Field(default_factory=dict)
     intrusive: bool = False
+
+
+class TicketOpenBody(BaseModel):
+    assignee: str | None = None
+
+
+class TicketUpdateBody(BaseModel):
+    status: str
+    note: str = ""
 
 
 class DecisionBody(BaseModel):
@@ -440,6 +450,38 @@ def create_app(platform: Platform) -> FastAPI:
         platform.audit.record(actor=p.user, action="finding.validate", project_id=finding.project_id,
                               target=finding.target, detail=result.to_dict())
         return result.to_dict()
+
+    # —— 整改工单 ——
+    @app.post("/findings/{finding_id}/ticket", status_code=201)
+    async def open_ticket(finding_id: str, body: TicketOpenBody, p: Principal = Depends(principal)) -> dict:
+        finding = platform.evidence.get(finding_id)
+        if finding is None:
+            raise HTTPException(404, "发现不存在")
+        need(p, Permission.SCAN, finding.project_id)
+        ticket = platform.tickets.open_from_finding(finding, assignee=body.assignee)
+        platform.audit.record(actor=p.user, action="ticket.open", project_id=finding.project_id,
+                              target=finding.target, detail={"ticket_id": ticket.ticket_id})
+        return ticket.to_dict()
+
+    @app.get("/tickets")
+    async def list_tickets(project_id: str, status: str | None = None,
+                           p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW, project_id)
+        return [t.to_dict() for t in platform.tickets.list(project_id, status=status)]
+
+    @app.patch("/tickets/{ticket_id}")
+    async def update_ticket(ticket_id: str, body: TicketUpdateBody, p: Principal = Depends(principal)) -> dict:
+        ticket = platform.tickets.get(ticket_id)
+        if ticket is None:
+            raise HTTPException(404, "工单不存在")
+        need(p, Permission.SCAN, ticket.project_id)
+        try:
+            ticket = platform.tickets.transition(ticket_id, body.status, actor=p.user, note=body.note)
+        except TicketError as exc:
+            raise HTTPException(409, str(exc)) from None
+        platform.audit.record(actor=p.user, action="ticket.update", project_id=ticket.project_id,
+                              detail={"ticket_id": ticket_id, "status": ticket.status.value})
+        return ticket.to_dict()
 
     @app.get("/audit")
     async def audit(project_id: str, limit: int = 200, p: Principal = Depends(principal)) -> dict:

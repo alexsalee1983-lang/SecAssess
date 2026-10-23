@@ -97,6 +97,25 @@ class ApiM3Test(unittest.TestCase):
                                    "intrusive": True}, headers=ALICE).json()
         self.assertEqual(r["verdict"], "needs_hitl")  # 侵入式需审批
 
+    def test_ticket_lifecycle_via_api(self):
+        self.client.post("/projects/p1/imports/nessus", json={"xml": NESSUS}, headers=LEAD)
+        fid = self.client.get("/findings", params={"project_id": "p1"}, headers=ALICE).json()[0]["finding_id"]
+        t = self.client.post(f"/findings/{fid}/ticket", json={"assignee": "ops"}, headers=ALICE)
+        self.assertEqual(t.status_code, 201)
+        tid = t.json()["ticket_id"]
+        self.assertEqual(t.json()["status"], "open")
+        # 列表按项目隔离、客户只读可见
+        tickets = self.client.get("/tickets", params={"project_id": "p1"}, headers=CLIENT).json()
+        self.assertEqual(len(tickets), 1)
+        # 非法跳转 409
+        self.assertEqual(self.client.patch(f"/tickets/{tid}", json={"status": "closed"},
+                                           headers=ALICE).status_code, 409)
+        self.assertEqual(self.client.patch(f"/tickets/{tid}", json={"status": "in_progress", "note": "修复中"},
+                                           headers=ALICE).json()["status"], "in_progress")
+        # 客户只读无 scan 权限，不能改工单
+        self.assertEqual(self.client.patch(f"/tickets/{tid}", json={"status": "resolved"},
+                                           headers=CLIENT).status_code, 403)
+
     def test_nessus_rejects_xxe_via_api(self):
         xxe = ('<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
                '<NessusClientData_v2><Report><ReportHost name="192.0.2.7"/></Report></NessusClientData_v2>')
