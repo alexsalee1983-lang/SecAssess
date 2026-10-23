@@ -487,6 +487,12 @@ def create_app(platform: Platform) -> FastAPI:
                               detail={"ticket_id": ticket_id, "status": ticket.status.value})
         return ticket.to_dict()
 
+    @app.get("/content")
+    async def content(kind: str | None = None, status: str | None = None,
+                      p: Principal = Depends(principal)) -> list[dict]:
+        need(p, Permission.VIEW)  # 内容包为平台级（无 project）
+        return [c.to_dict() for c in platform.content.list(kind=kind, status=status)]
+
     @app.get("/metrics")
     async def metrics(project_id: str | None = None, p: Principal = Depends(principal)) -> dict:
         if project_id is not None:

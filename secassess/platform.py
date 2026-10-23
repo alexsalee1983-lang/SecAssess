@@ -29,6 +29,7 @@ from .adapters.mock_placeholder import PlaceholderAdapter
 from .adapters.openapi_review import OpenAPIReviewAdapter
 from .core.audit import AuditLog
 from .core.jobs import JobManager
+from .content.registry import ContentRegistry
 from .copilot.harness import CopilotHarness
 from .core.lifecycle import LifecycleManager
 from .core.metrics import MetricsRegistry
@@ -70,6 +71,7 @@ class Platform:
     api_keys: dict[str, Principal]
     auth: AuthProvider
     metrics: MetricsRegistry
+    content: ContentRegistry
 
     @classmethod
     def create(cls, config: dict | None = None, *, base_dir: str | Path = ".") -> "Platform":
@@ -119,8 +121,9 @@ class Platform:
         tickets = TicketStore(db("tickets.db"))
         auth = ApiKeyProvider(api_keys)
         metrics = MetricsRegistry()
+        content = ContentRegistry()
         return cls(registry, gate, jobs, evidence, graph, facts, audit, vault, orchestrator, copilot,
-                   tenants, lifecycle, validator, tickets, api_keys, auth, metrics)
+                   tenants, lifecycle, validator, tickets, api_keys, auth, metrics, content)
 
     @classmethod
     def from_file(cls, path: str | Path, *, base_dir: str | Path = ".") -> "Platform":
