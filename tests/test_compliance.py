@@ -60,6 +60,17 @@ class ComplianceMapperTest(unittest.TestCase):
         self.assertTrue(all(c.framework == "CIS-v8" for c in m.controls))
         self.assertEqual(sum(m.summary().values()), len(m.controls))
 
+    def test_dengbao_mapping_present(self):
+        self.evidence.add_findings([finding(Category.VULNERABILITY, "漏洞", "SIM-VULN-D")])
+        m = build_matrix(self.evidence, "p1", frameworks=["DJCP-2.0"])
+        ids = {c.control_id: c.status for c in m.controls}
+        self.assertEqual(ids["8.1.4.5"], "gap")       # 漏洞映射到入侵防范
+        self.assertEqual(ids["8.1.10.3"], "no_evidence")
+
+    def test_three_frameworks_default(self):
+        self.assertEqual(set(known_frameworks()), {"CIS-v8", "ISO27001-2022", "DJCP-2.0"})
+        self.assertEqual(controls_for_category(Category.EXPOSURE, "DJCP-2.0"), ["8.1.3.1", "8.1.3.2"])
+
     def test_agent_and_frameworks_helpers(self):
         agent = ComplianceAgent(self.evidence)
         self.assertIn("CIS-v8", known_frameworks())
